@@ -14,7 +14,7 @@ OtaGithub::OtaGithub()
       _taskHandle(nullptr),
       _lastPeriodicCheck(0),
       _initialCheckDone(false) {
-    strncpy(_lastStatus, "Idle", sizeof(_lastStatus) - 1);
+    strncpy(m_status, "Idle", sizeof(m_status) - 1);
     strncpy(_latestVersion, FIRMWARE_VERSION, sizeof(_latestVersion) - 1);
 }
 
@@ -33,8 +33,8 @@ void OtaGithub::triggerCheck() {
 
 void OtaGithub::setStatus(const char* status) {
     if (status) {
-        strncpy(_lastStatus, status, sizeof(_lastStatus) - 1);
-        _lastStatus[sizeof(_lastStatus) - 1] = '\0';
+        strncpy(m_status, status, sizeof(m_status) - 1);
+        m_status[sizeof(m_status) - 1] = '\0';
     }
 }
 
@@ -295,7 +295,7 @@ void OtaGithub::runTask() {
 
     // Compare versions
     if (!isNewerVersion(remoteTag.c_str(), FIRMWARE_VERSION)) {
-        char msg[64];
+        char msg[192];
         snprintf(msg, sizeof(msg), "Установлена актуальная версия (v%s)", FIRMWARE_VERSION);
         setStatus(msg);
         Serial.printf("[OTA] Current version v%s is up to date (remote: %s).\n",

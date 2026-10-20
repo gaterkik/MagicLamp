@@ -24,7 +24,8 @@ public:
     void triggerCheck();
     void update(LedMatrix* matrix);
 
-    const char* getLastStatus() const { return _lastStatus; }
+    const char* getLastStatus() const { return m_status; }
+    const char* getStatus() const { return m_status; }
     const char* getLatestVersion() const { return _latestVersion; }
     bool isUpdating() const { return _isUpdating; }
     bool isChecking() const { return _isChecking; }
@@ -46,7 +47,7 @@ private:
     volatile bool _isTaskRunning = false;
     volatile int _progress = 0;
 
-    char _lastStatus[96] = "Idle";
+    char m_status[192] = "Idle";
     char _latestVersion[32] = "";
 
     TaskHandle_t _taskHandle = nullptr;

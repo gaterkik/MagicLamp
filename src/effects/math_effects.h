@@ -21,12 +21,23 @@ private:
     bool m_grid[MATRIX_HEIGHT][MATRIX_WIDTH];
     bool m_next[MATRIX_HEIGHT][MATRIX_WIDTH];
     uint8_t m_age[MATRIX_HEIGHT][MATRIX_WIDTH];
+    uint8_t m_nextAge[MATRIX_HEIGHT][MATRIX_WIDTH];
+    uint8_t m_hue[MATRIX_HEIGHT][MATRIX_WIDTH];
+    uint8_t m_nextHue[MATRIX_HEIGHT][MATRIX_WIDTH];
+
     uint32_t m_lastStepTime = 0;
+    uint32_t m_stagnantSince = 0;
+    uint16_t m_prevHash1 = 0;
+    uint16_t m_prevHash2 = 0;
     uint16_t m_historyHash[8];
     uint8_t m_historyIdx = 0;
 
+    uint8_t m_currentSeedHue = 0;
+    uint8_t m_seedCounter = 0;
+
     void seedRandom();
-    void step();
+    void spawnSeed();
+    void step(uint32_t now);
     uint16_t computeHash() const;
 };
 

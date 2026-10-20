@@ -17,6 +17,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>MagicLamp ESP32-C6</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3Cfilter id='g' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='1.5' result='b'/%3E%3CfeMerge%3E%3CfeMergeNode in='b'/%3E%3CfeMergeNode in='SourceGraphic'/%3E%3C/feMerge%3E%3C/filter%3E%3C/defs%3E%3Crect width='32' height='32' rx='6' fill='%23090d16'/%3E%3Cpath d='M16 4 C11 4 8 8 8 13 C8 17 11 20 12 22 L20 22 C21 20 24 17 24 13 C24 8 21 4 16 4 Z' fill='none' stroke='%2338bdf8' stroke-width='2' filter='url(%23g)'/%3E%3Cpath d='M13 13 Q16 7 19 13 Q16 19 13 13' fill='%23818cf8' opacity='0.8' filter='url(%23g)'/%3E%3Crect x='13' y='23' width='6' height='2' rx='1' fill='%2338bdf8'/%3E%3Crect x='14' y='26' width='4' height='2' rx='1' fill='%2394a3b8'/%3E%3C/svg%3E">
   <style>
     :root {
       --bg: #090d16;

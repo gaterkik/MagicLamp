@@ -15,9 +15,14 @@ static inline float distRingX(float x1, float x2) {
 // =============================================================================
 
 void EffectGameOfLife::init(LedMatrix& matrix) {
+    m_currentSeedHue = random8();
     seedRandom();
+    m_prevHash1 = 0;
+    m_prevHash2 = 0;
     memset(m_historyHash, 0, sizeof(m_historyHash));
     m_historyIdx = 0;
+    m_stagnantSince = 0;
+    m_seedCounter = 0;
     matrix.clear(false);
 }
 
@@ -35,19 +40,140 @@ uint16_t EffectGameOfLife::computeHash() const {
 }
 
 void EffectGameOfLife::seedRandom() {
+    m_currentSeedHue = random8();
     for (int y = 0; y < MATRIX_HEIGHT; y++) {
         for (int x = 0; x < MATRIX_WIDTH; x++) {
-            m_grid[y][x] = (random8(100) < 32);
-            m_age[y][x] = m_grid[y][x] ? 1 : 0;
+            bool alive = (random8(100) < 32);
+            m_grid[y][x] = alive;
+            m_age[y][x] = alive ? (1 + random8(6)) : 0;
+            m_hue[y][x] = m_currentSeedHue + random8(24);
         }
     }
 }
 
-void EffectGameOfLife::step() {
+void EffectGameOfLife::spawnSeed() {
+    m_currentSeedHue += 59; // Fresh distinct hue for newly seeded pattern
+    m_seedCounter = (m_seedCounter + 1) % 4;
+
+    // Scan for lowest-density area on cylinder
+    int minDensity = 999;
+    int bestX = random8(MATRIX_WIDTH);
+    int bestY = 2 + random8(MATRIX_HEIGHT - 6);
+
+    for (int attempt = 0; attempt < 12; attempt++) {
+        int cx = random8(MATRIX_WIDTH);
+        int cy = 2 + random8(MATRIX_HEIGHT - 6);
+        int count = 0;
+        for (int dy = -2; dy <= 2; dy++) {
+            int ny = cy + dy;
+            if (ny < 0 || ny >= MATRIX_HEIGHT) continue;
+            for (int dx = -2; dx <= 2; dx++) {
+                int nx = wrapX(cx + dx);
+                if (m_grid[ny][nx]) count++;
+            }
+        }
+        if (count < minDensity) {
+            minDensity = count;
+            bestX = cx;
+            bestY = cy;
+            if (count == 0) break;
+        }
+    }
+
+    // Pattern definitions
+    // 0: Glider (3x3)
+    static const uint8_t PAT_GLIDER[3][3] = {
+        {0, 1, 0},
+        {0, 0, 1},
+        {1, 1, 1}
+    };
+    // 1: R-pentomino (3x3)
+    static const uint8_t PAT_RPENTOMINO[3][3] = {
+        {0, 1, 1},
+        {1, 1, 0},
+        {0, 1, 0}
+    };
+    // 2: Lightweight Spaceship LWSS (4x5)
+    static const uint8_t PAT_LWSS[4][5] = {
+        {0, 1, 0, 0, 1},
+        {1, 0, 0, 0, 0},
+        {1, 0, 0, 0, 1},
+        {1, 1, 1, 1, 0}
+    };
+    // 3: Acorn (3x7)
+    static const uint8_t PAT_ACORN[3][7] = {
+        {0, 1, 0, 0, 0, 0, 0},
+        {0, 0, 0, 1, 0, 0, 0},
+        {1, 1, 0, 0, 1, 1, 1}
+    };
+
+    if (m_seedCounter == 0) {
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 3; c++) {
+                if (PAT_GLIDER[r][c]) {
+                    int y = bestY + r;
+                    if (y >= 0 && y < MATRIX_HEIGHT) {
+                        int x = wrapX(bestX + c);
+                        m_grid[y][x] = true;
+                        m_age[y][x] = 1; // start young (soft glow)
+                        m_hue[y][x] = m_currentSeedHue;
+                    }
+                }
+            }
+        }
+    } else if (m_seedCounter == 1) {
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 3; c++) {
+                if (PAT_RPENTOMINO[r][c]) {
+                    int y = bestY + r;
+                    if (y >= 0 && y < MATRIX_HEIGHT) {
+                        int x = wrapX(bestX + c);
+                        m_grid[y][x] = true;
+                        m_age[y][x] = 1;
+                        m_hue[y][x] = m_currentSeedHue;
+                    }
+                }
+            }
+        }
+    } else if (m_seedCounter == 2) {
+        for (int r = 0; r < 4; r++) {
+            for (int c = 0; c < 5; c++) {
+                if (PAT_LWSS[r][c]) {
+                    int y = bestY + r;
+                    if (y >= 0 && y < MATRIX_HEIGHT) {
+                        int x = wrapX(bestX + c);
+                        m_grid[y][x] = true;
+                        m_age[y][x] = 1;
+                        m_hue[y][x] = m_currentSeedHue;
+                    }
+                }
+            }
+        }
+    } else {
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 7; c++) {
+                if (PAT_ACORN[r][c]) {
+                    int y = bestY + r;
+                    if (y >= 0 && y < MATRIX_HEIGHT) {
+                        int x = wrapX(bestX + c);
+                        m_grid[y][x] = true;
+                        m_age[y][x] = 1;
+                        m_hue[y][x] = m_currentSeedHue;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void EffectGameOfLife::step(uint32_t now) {
     int aliveCount = 0;
+
     for (int y = 0; y < MATRIX_HEIGHT; y++) {
         for (int x = 0; x < MATRIX_WIDTH; x++) {
             int neighbors = 0;
+            uint8_t parentHue = m_currentSeedHue;
+
             for (int dy = -1; dy <= 1; dy++) {
                 int ny = y + dy;
                 if (ny < 0 || ny >= MATRIX_HEIGHT) continue;
@@ -56,6 +182,7 @@ void EffectGameOfLife::step() {
                     int nx = wrapX(x + dx);
                     if (m_grid[ny][nx]) {
                         neighbors++;
+                        parentHue = m_hue[ny][nx];
                     }
                 }
             }
@@ -66,54 +193,76 @@ void EffectGameOfLife::step() {
 
             if (isAlive) {
                 aliveCount++;
-                m_age[y][x] = wasAlive ? (m_age[y][x] < 24 ? m_age[y][x] + 1 : 24) : 1;
+                if (wasAlive) {
+                    m_nextAge[y][x] = (m_age[y][x] < 24) ? (m_age[y][x] + 1) : 24;
+                    m_nextHue[y][x] = m_hue[y][x];
+                } else {
+                    m_nextAge[y][x] = 1; // freshly born
+                    m_nextHue[y][x] = parentHue;
+                }
             } else {
-                m_age[y][x] = 0;
+                m_nextAge[y][x] = 0;
+                m_nextHue[y][x] = 0;
             }
         }
     }
 
     memcpy(m_grid, m_next, sizeof(m_grid));
+    memcpy(m_age, m_nextAge, sizeof(m_age));
+    memcpy(m_hue, m_nextHue, sizeof(m_hue));
 
-    // Stagnation and loop detection
+    // Stagnation detection: extinction (<4 cells), static (period 1), or oscillation (period 2)
     uint16_t currentHash = computeHash();
-    bool stagnated = false;
-    for (int i = 0; i < 8; i++) {
-        if (m_historyHash[i] == currentHash) {
-            stagnated = true;
-            break;
+    bool isStatic = (currentHash == m_prevHash1);
+    bool isPeriod2 = (currentHash == m_prevHash2);
+    bool isExtinct = (aliveCount < 4);
+
+    if (isExtinct || isStatic || isPeriod2) {
+        if (m_stagnantSince == 0) {
+            m_stagnantSince = now;
         }
+
+        // If stagnant for > 4 seconds or completely extinct, softly inject a new seed pattern
+        if ((now - m_stagnantSince >= 4000) || (aliveCount == 0)) {
+            spawnSeed();
+            m_stagnantSince = now; // reset timer to allow newly seeded cells to flourish
+        }
+    } else {
+        m_stagnantSince = 0;
     }
 
+    m_prevHash2 = m_prevHash1;
+    m_prevHash1 = currentHash;
     m_historyHash[m_historyIdx] = currentHash;
     m_historyIdx = (m_historyIdx + 1) % 8;
-
-    if (stagnated || aliveCount < 8 || aliveCount > 190) {
-        seedRandom();
-    }
 }
 
 void EffectGameOfLife::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
     uint32_t now = millis();
 
-    // Physical shake triggers instant re-seeding of the colony
+    // Physical shake triggers instant re-seeding of the entire colony
     if (const_cast<ImuMpu6050&>(imu).isShaken()) {
         seedRandom();
         m_lastStepTime = now;
+        m_stagnantSince = 0;
     }
 
     // Step evolution every 135 ms
     if (now - m_lastStepTime >= 135) {
         m_lastStepTime = now;
-        step();
+        step(now);
     }
 
-    // Render with smooth age-based colors
+    // Render with smooth age-based colors and soft bloom for newly born cells
     for (int y = 0; y < MATRIX_HEIGHT; y++) {
         for (int x = 0; x < MATRIX_WIDTH; x++) {
             if (m_grid[y][x]) {
-                uint8_t hue = (m_age[y][x] * 10 + static_cast<uint8_t>(now / 40)) % 256;
-                uint8_t bri = map(m_age[y][x], 1, 24, 200, 255);
+                uint8_t hue = m_hue[y][x];
+                // Smooth bloom: age 1 is soft (90), age 2 is 130, age 3 is 170, age 4 is 210, age >=5 is 255
+                uint8_t bri = (m_age[y][x] <= 1) ? 90 :
+                              (m_age[y][x] <= 2) ? 130 :
+                              (m_age[y][x] <= 3) ? 170 :
+                              (m_age[y][x] <= 4) ? 210 : 255;
                 matrix.setPixel(x, y, CHSV(hue, 220, bri));
             } else {
                 matrix.setPixel(x, y, CRGB::Black);

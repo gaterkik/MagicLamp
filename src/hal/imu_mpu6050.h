@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Arduino.h>
-#include <Wire.h>
 #include "config.h"
 
 #ifndef MPU6050_I2C_ADDR
@@ -18,14 +17,16 @@
 
 /**
  * @file imu_mpu6050.h
- * @brief Non-blocking I2C driver for GY-521 (MPU-6050) with graceful fallback.
+ * @brief Software Open-Drain Bit-Bang I2C driver for GY-521 (MPU-6050) with graceful fallback.
  * 
- * Pins: SDA = GPIO 6, SCL = GPIO 5 (400 kHz fast I2C).
- * I2C address: 0x68 (MPU6050_I2C_ADDR).
+ * Pins: SDA = GPIO 6, SCL = GPIO 5 (default).
+ * Fully independent of Arduino <Wire.h> to prevent ESP32-C6 pin manager conflicts.
  * 
  * Features:
- * - Hardware detection via WHO_AM_I register (0x75 == 0x68).
- * - Graceful fallback mode if sensor is absent or disconnected.
+ * - Software Open-Drain Bit-Bang I2C with 5 µs half-period (100 kHz).
+ * - Full address scan (0x08..0x77) on (6,5) and mirror (5,6).
+ * - Hardware detection via WHO_AM_I register (0x75).
+ * - Graceful fallback mode (0, -1, 0) if sensor is absent or disconnected.
  * - Non-blocking accelerometer polling every 20-50 ms.
  * - Smoothed gravity vector (gx, gy, gz) via low-pass filtering.
  * - Shake gesture recognition (isShaken()).
@@ -47,8 +48,8 @@ public:
                float shakeThreshold = IMU_SHAKE_THRESHOLD);
 
     /**
-     * @brief Initialize Wire I2C bus and MPU-6050 registers.
-     * If the sensor is not found or fails to respond, fallback mode is engaged.
+     * @brief Initialize Bit-Bang I2C and scan for GY-521.
+     * If the sensor is not found, fallback mode is engaged.
      * @return true if hardware was detected and initialized, false if fallback mode engaged.
      */
     bool begin();
@@ -125,9 +126,8 @@ public:
 
     /**
      * @brief Get detailed diagnostic status string:
-     * "Online (SDA:..., SCL:..., addr:0x..., who:0x...)",
-     * "No pull-up / Check 3.3V on GY-521 (SDA:LOW, SCL:HIGH)", or
-     * "Not Found (SDA/SCL HIGH, no ACK on GPIO 4,5,6,8,9)".
+     * "Online (addr:0x..., who:0x..., SDA:..., SCL:...)" or
+     * "No I2C ACK on 5/6 (SDA:HIGH, SCL:HIGH)".
      */
     const char* getStatus() const { return m_statusStr; }
     const char* getStatusString() const { return m_statusStr; }
@@ -163,9 +163,22 @@ private:
     float m_rawAy;
     float m_rawAz;
 
+    // Bit-Bang Open-Drain I2C primitives
+    inline void i2cSetHigh(uint8_t pin) {
+        pinMode(pin, INPUT_PULLUP);
+    }
+    inline void i2cSetLow(uint8_t pin) {
+        digitalWrite(pin, LOW);
+        pinMode(pin, OUTPUT);
+    }
+    void i2cStart();
+    void i2cStop();
+    bool i2cWriteByte(uint8_t data);
+    uint8_t i2cReadByte(bool ack);
+
     void recoverBus(uint8_t sda, uint8_t scl);
+    bool scanPair(uint8_t sda, uint8_t scl);
     bool scanPins();
-    bool tryInitOnPins(uint8_t sda, uint8_t scl);
     bool readRawData(int16_t& ax, int16_t& ay, int16_t& az);
     void updateFallback(uint32_t now);
 };

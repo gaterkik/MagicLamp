@@ -134,6 +134,23 @@ void LampWebServer::registerRoutes() {
     // Root SPA
     m_server.on("/", HTTP_GET, [this]() { handleRoot(); });
 
+    // Favicon
+    m_server.on("/favicon.ico", HTTP_GET, [this]() {
+        static const char FAVICON_SVG[] PROGMEM = 
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+            "<defs><filter id='g' x='-20%' y='-20%' width='140%' height='140%'>"
+            "<feGaussianBlur stdDeviation='1.5' result='b'/>"
+            "<feMerge><feMergeNode in='b'/><feMergeNode in='SourceGraphic'/></feMerge>"
+            "</filter></defs>"
+            "<rect width='32' height='32' rx='6' fill='#090d16'/>"
+            "<path d='M16 4 C11 4 8 8 8 13 C8 17 11 20 12 22 L20 22 C21 20 24 17 24 13 C24 8 21 4 16 4 Z' fill='none' stroke='#38bdf8' stroke-width='2' filter='url(#g)'/>"
+            "<path d='M13 13 Q16 7 19 13 Q16 19 13 13' fill='#818cf8' opacity='0.8' filter='url(#g)'/>"
+            "<rect x='13' y='23' width='6' height='2' rx='1' fill='#38bdf8'/>"
+            "<rect x='14' y='26' width='4' height='2' rx='1' fill='#94a3b8'/>"
+            "</svg>";
+        m_server.send(200, "image/svg+xml", FAVICON_SVG);
+    });
+
     // REST API
     m_server.on("/api/status", HTTP_GET, [this]() { handleStatus(); });
     m_server.on("/api/control", HTTP_POST, [this]() { handleControl(); });
