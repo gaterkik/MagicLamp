@@ -95,3 +95,63 @@
   4. `ImuMpu6050` проверяет обе комбинации пинов `(SDA=6, SCL=5)` и `(SDA=5, SCL=6)`.
   5. Сборка `pio run` завершается со статусом `SUCCESS`.
 - **QA_Notes:** Проверено QA: замечаний нет.
+
+---
+
+## Фаза 4 (v0.5.0): Магазин эффектов на GitHub + LittleFS + EffectVM
+
+---
+
+### [Task 4.1] Файловая система LittleFS, движок подгружаемых эффектов `EffectVM` (.eff) и динамическая регистрация в `EffectManager`
+- **Status:** `DONE`
+- **Files:** `include/version.h`, `src/effects/effect_vm.h`, `src/effects/effect_vm.cpp`, `src/effects/effect_manager.h`, `src/effects/effect_manager.cpp`, `src/main.cpp`
+- **Description:**
+  1. Поднять `FIRMWARE_VERSION` в `include/version.h` до `"0.5.0"`.
+  2. НЕ менять `partitions.csv` (использовать существующий раздел littlefs).
+  3. Реализовать `src/effects/effect_vm.h` и `src/effects/effect_vm.cpp` с поддержкой чтения компактных `.eff` файлов из LittleFS (`/effects/<id>.eff`), настраиваемых палитр и 6 параметрических/шейдерных режимов рендеринга на цилиндре 16x16:
+     - `aurora`: Северное сияние — волнообразные вертикальные ленты с шумом Перлина
+     - `matrix_rain`: Цифровой дождь «Матрица» с бегущими вертикальными шлейфами
+     - `lava_lamp`: Лава-лампа — медленная тепловая конвекция крупных восковых капель
+     - `vortex`: Галактическая спираль — вращающиеся спиральные рукава вокруг цилиндра
+     - `fireworks`: Фейерверк — пуск ракет снизу вверх и кольцевой разлет искр с гравитацией
+     - `cyber_pulse`: Киберпанк-пульс — неоновые кольца и математический волновой шейдер с реакцией на звук/время
+  4. Расширить `EffectManager`: помимо 10 базовых эффектов (0..9), поддерживать динамический список загруженных `.eff` эффектов из `/effects/*.eff` (индексы 10..N, до 24 эффектов суммарно) с переключением двойным кликом кнопки и из WebUI.
+- **Acceptance Criteria (Критерии для QA):**
+  1. `FIRMWARE_VERSION` в `include/version.h` установлена в `"0.5.0"`.
+  2. Файл `partitions.csv` не изменен (сохранен исходный раздел littlefs).
+  3. `EffectVM` поддерживает разбор параметров `.eff` и все 6 алгоритмов (`aurora`, `matrix_rain`, `lava_lamp`, `vortex`, `fireworks`, `cyber_pulse`).
+  4. `EffectManager` поддерживает базовые индексы 0..9 и динамические индексы 10..N с безопасным циклическим переключением.
+  5. Сборка `pio run` завершается со статусом `SUCCESS`.
+- **QA_Notes:** Проверено QA: замечаний нет.
+
+
+---
+
+### [Task 4.2] Модуль `StoreManager`, REST API магазина и секция «Магазин эффектов» в `WebUI`
+- **Status:** `DONE`
+- **Files:** `src/network/store_manager.h`, `src/network/store_manager.cpp`, `src/network/web_server.h`, `src/network/web_server.cpp`, `src/network/webui_html.h`, `src/main.cpp`
+- **Description:**
+  1. Реализовать `src/network/store_manager.h` и `src/network/store_manager.cpp` (инициализация `LittleFS.begin(true)`, сканирование `/effects/*.eff` и регистрация в `EffectManager`, скачивание `.eff` по HTTPS с GitHub Raw в `/effects/<id>.eff` с `HTTPC_STRICT_FOLLOW_REDIRECTS`, удаление эффектов).
+  2. Добавить в `web_server.*` эндпоинты `/api/store/installed`, `/api/store/catalog`, `/api/store/install`, `/api/store/delete` и обновить `/api/status` (передавать полный список доступных в лампе эффектов: 10 базовых + установленные из LittleFS).
+  3. Обновить `webui_html.h`: динамическая отрисовка кнопок всех установленных эффектов в пульте управления + новая секция «Магазин эффектов (GitHub Effect Store)» с индикатором памяти LittleFS, кнопкой «Обновить витрину», карточками эффектов из `manifest.json` и кнопками «Скачать в лампу», «Включить», «Удалить».
+- **Acceptance Criteria (Критерии для QA):**
+  1. `StoreManager` корректно монтирует LittleFS, управляет установкой/удалением `.eff` файлов и динамической регистрацией в `EffectManager`.
+  2. Реализованы все эндпоинты `/api/store/*` и обновлен `/api/status`.
+  3. В WebUI отображается индикатор памяти LittleFS, каталог с GitHub и кнопки действий.
+  4. Сборка `pio run` завершается со статусом `SUCCESS`.
+- **QA_Notes:** Проверено QA: замечаний нет.
+
+
+---
+
+### [Task 4.3] Создание витрины магазина в репозитории (`store/manifest.json` и 6 эффектов `.eff`)
+- **Status:** `DONE`
+- **Files:** `store/manifest.json`, `store/effects/aurora.eff`, `store/effects/matrix_rain.eff`, `store/effects/lava_lamp.eff`, `store/effects/vortex.eff`, `store/effects/fireworks.eff`, `store/effects/cyber_pulse.eff`
+- **Description:**
+  1. Создать в корне проекта папку `store/effects/` и 6 файлов эффектов с параметрами: `aurora.eff`, `matrix_rain.eff`, `lava_lamp.eff`, `vortex.eff`, `fireworks.eff`, `cyber_pulse.eff`.
+  2. Создать каталог `store/manifest.json` с метаданными всех 6 эффектов (`id`, `name`, `description` на русском языке, `version`, `author`, `size`, `url` на `https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/effects/<id>.eff`).
+- **Acceptance Criteria (Критерии для QA):**
+  1. Папка `store/effects/` содержит все 6 файлов `.eff`.
+  2. `store/manifest.json` является валидным JSON и содержит полные метаданные всех 6 эффектов.
+  3. Формат `.eff` файлов совместим с парсером `EffectVM`.
+- **QA_Notes:** Проверено QA: замечаний нет.

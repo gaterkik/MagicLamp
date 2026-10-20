@@ -7,6 +7,7 @@
 #include "hal/imu_mpu6050.h"
 #include "wifi_manager.h"
 #include "ota_github.h"
+#include "store_manager.h"
 #include <Update.h>
 
 LampWebServer::LampWebServer()
@@ -17,6 +18,7 @@ LampWebServer::LampWebServer()
       m_imu(nullptr),
       m_wifi(nullptr),
       m_ota(nullptr),
+      m_store(nullptr),
       m_rebootPending(false),
       m_rebootTime(0) {}
 
@@ -25,13 +27,15 @@ void LampWebServer::begin(EffectManager* effectMgr,
                           MicI2S* mic,
                           ImuMpu6050* imu,
                           WiFiManager* wifi,
-                          OtaGithub* ota) {
+                          OtaGithub* ota,
+                          StoreManager* store) {
     m_effectMgr = effectMgr;
     m_matrix = matrix;
     m_mic = mic;
     m_imu = imu;
     m_wifi = wifi;
     m_ota = ota;
+    m_store = store;
     m_rebootPending = false;
     m_rebootTime = 0;
 
@@ -136,6 +140,12 @@ void LampWebServer::registerRoutes() {
     m_server.on("/api/ota/check", HTTP_POST, [this]() { handleOtaCheck(); });
     m_server.on("/api/wifi", HTTP_POST, [this]() { handleWifi(); });
 
+    // GitHub Effect Store API
+    m_server.on("/api/store/installed", HTTP_GET, [this]() { handleStoreInstalled(); });
+    m_server.on("/api/store/catalog", HTTP_GET, [this]() { handleStoreCatalog(); });
+    m_server.on("/api/store/install", HTTP_POST, [this]() { handleStoreInstall(); });
+    m_server.on("/api/store/delete", HTTP_POST, [this]() { handleStoreDelete(); });
+
     // Browser OTA Upload Handler via Update.h
     m_server.on("/api/ota/upload", HTTP_POST, [this]() {
         if (!Update.hasError()) {
@@ -218,36 +228,40 @@ void LampWebServer::handleStatus() {
     int otaProg = m_ota ? m_ota->getProgress() : 0;
     bool isUpdating = m_ota ? m_ota->isUpdating() : false;
 
-    snprintf(json, sizeof(json),
-        "{\"power\":%s,\"brightness\":%u,\"effect\":%u,\"effectName\":\"%s\","
-        "\"speed\":%u,\"micSensitivity\":%u,\"cpuTemp\":%.1f,\"rssi\":%d,"
-        "\"ip\":\"%s\",\"ssid\":\"%s\",\"isAp\":%s,\"isConnected\":%s,"
-        "\"uptime\":%lu,\"freeHeap\":%lu,\"imuStatus\":\"%s\","
-        "\"version\":\"%s\",\"otaStatus\":\"%s\",\"latestVersion\":\"%s\","
-        "\"otaProgress\":%d,\"isUpdating\":%s}",
-        power ? "true" : "false",
-        brightness,
-        effect,
-        effectName,
-        speed,
-        micSens,
-        cpuTemp,
-        rssi,
-        ip.c_str(),
-        ssid.c_str(),
-        isAp ? "true" : "false",
-        isConnected ? "true" : "false",
-        (unsigned long)uptimeSec,
-        (unsigned long)freeHeapKb,
-        imuStatus,
-        FIRMWARE_VERSION,
-        otaStatus,
-        latestVer,
-        otaProg,
-        isUpdating ? "true" : "false"
-    );
+    uint8_t totalEff = m_effectMgr ? m_effectMgr->getTotalEffects() : NUM_CORE_EFFECTS;
+    String effectsArray = "[";
+    if (m_effectMgr) {
+        for (uint8_t i = 0; i < totalEff; i++) {
+            if (i > 0) effectsArray += ",";
+            effectsArray += "{\"index\":" + String(i) + ",\"name\":\"" + String(m_effectMgr->getEffectName(i)) + "\"}";
+        }
+    }
+    effectsArray += "]";
 
-    m_server.send(200, "application/json", json);
+    String jsonStr = "{\"power\":" + String(power ? "true" : "false") +
+                     ",\"brightness\":" + String(brightness) +
+                     ",\"effect\":" + String(effect) +
+                     ",\"effectName\":\"" + String(effectName) + "\"" +
+                     ",\"speed\":" + String(speed) +
+                     ",\"micSensitivity\":" + String(micSens) +
+                     ",\"cpuTemp\":" + String(cpuTemp, 1) +
+                     ",\"rssi\":" + String(rssi) +
+                     ",\"ip\":\"" + ip + "\"" +
+                     ",\"ssid\":\"" + ssid + "\"" +
+                     ",\"isAp\":" + String(isAp ? "true" : "false") +
+                     ",\"isConnected\":" + String(isConnected ? "true" : "false") +
+                     ",\"uptime\":" + String((unsigned long)uptimeSec) +
+                     ",\"freeHeap\":" + String((unsigned long)freeHeapKb) +
+                     ",\"imuStatus\":\"" + String(imuStatus) + "\"" +
+                     ",\"version\":\"" + String(FIRMWARE_VERSION) + "\"" +
+                     ",\"otaStatus\":\"" + String(otaStatus) + "\"" +
+                     ",\"latestVersion\":\"" + String(latestVer) + "\"" +
+                     ",\"otaProgress\":" + String(otaProg) +
+                     ",\"isUpdating\":" + String(isUpdating ? "true" : "false") +
+                     ",\"totalEffects\":" + String(totalEff) +
+                     ",\"effects\":" + effectsArray + "}";
+
+    m_server.send(200, "application/json", jsonStr);
 }
 
 void LampWebServer::handleControl() {
@@ -270,7 +284,8 @@ void LampWebServer::handleControl() {
 
     int effectVal = 0;
     if (getIntParam(m_server, body, "effect", effectVal)) {
-        if (effectVal >= 0 && effectVal < NUM_CORE_EFFECTS && m_effectMgr && m_matrix) {
+        uint8_t totalEff = m_effectMgr ? m_effectMgr->getTotalEffects() : NUM_CORE_EFFECTS;
+        if (effectVal >= 0 && effectVal < totalEff && m_effectMgr && m_matrix) {
             m_effectMgr->setEffect(effectVal, *m_matrix);
         }
     }
@@ -326,6 +341,79 @@ void LampWebServer::handleWifi() {
     }
 }
 
+void LampWebServer::handleStoreInstalled() {
+    if (m_store) {
+        m_server.send(200, "application/json", m_store->getInstalledJson());
+    } else {
+        m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"Store module unavailable\"}");
+    }
+}
+
+void LampWebServer::handleStoreCatalog() {
+    if (m_store) {
+        String catalog;
+        if (m_store->fetchCatalogJson(catalog)) {
+            m_server.send(200, "application/json", catalog);
+        } else {
+            m_server.send(502, "application/json", "{\"status\":\"error\",\"message\":\"Failed to fetch catalog from GitHub Raw\"}");
+        }
+    } else {
+        m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"Store module unavailable\"}");
+    }
+}
+
+void LampWebServer::handleStoreInstall() {
+    String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
+    String id = "";
+    String url = "";
+    getStringParam(m_server, body, "id", id);
+    getStringParam(m_server, body, "url", url);
+
+    if (id.isEmpty()) {
+        m_server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing effect id\"}");
+        return;
+    }
+
+    if (m_store) {
+        String msg;
+        if (m_store->installEffect(id, url, m_effectMgr, msg)) {
+            // Activate newly installed effect immediately
+            if (m_effectMgr && m_matrix) {
+                uint8_t total = m_effectMgr->getTotalEffects();
+                if (total > 0) {
+                    m_effectMgr->setEffect(total - 1, *m_matrix);
+                }
+            }
+            m_server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"" + msg + "\"}");
+        } else {
+            m_server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"" + msg + "\"}");
+        }
+    } else {
+        m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"Store module unavailable\"}");
+    }
+}
+
+void LampWebServer::handleStoreDelete() {
+    String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
+    String id = "";
+    getStringParam(m_server, body, "id", id);
+
+    if (id.isEmpty()) {
+        m_server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing effect id\"}");
+        return;
+    }
+
+    if (m_store) {
+        if (m_store->deleteEffect(id, m_effectMgr)) {
+            m_server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Effect deleted\"}");
+        } else {
+            m_server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Failed to delete effect\"}");
+        }
+    } else {
+        m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"Store module unavailable\"}");
+    }
+}
+
 void LampWebServer::handleNotFound() {
     if (m_wifi && m_wifi->isApMode()) {
         String target = String("http://") + m_wifi->getIpAddress() + "/";
@@ -335,3 +423,4 @@ void LampWebServer::handleNotFound() {
         m_server.send(404, "text/plain", "404 Not Found");
     }
 }
+

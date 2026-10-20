@@ -267,6 +267,82 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       color: var(--text);
     }
 
+    /* Effect Store Cards */
+    .store-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 12px;
+    }
+    .store-card {
+      background: #172138;
+      border: 1px solid #22304d;
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .store-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 6px;
+    }
+    .store-name {
+      font-weight: 700;
+      font-size: 0.92rem;
+      color: var(--text);
+    }
+    .store-badge {
+      font-size: 0.68rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .store-badge.installed {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .store-badge.available {
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--primary);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+    }
+    .store-desc {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.35;
+    }
+    .store-meta {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      border-top: 1px solid #22304d;
+      padding-top: 6px;
+    }
+    .store-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .btn-sm {
+      padding: 6px 10px;
+      font-size: 0.78rem;
+      border-radius: 6px;
+    }
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.2);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+    .btn-danger:hover {
+      background: var(--danger);
+      color: #fff;
+    }
+
     /* OTA & WiFi Forms */
     .btn {
       background: var(--primary);
@@ -490,6 +566,29 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
     </section>
 
+    <!-- GITHUB EFFECT STORE -->
+    <section class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>&#128722; Магазин эффектов (GitHub Effect Store)</span>
+        <button class="btn btn-secondary btn-sm" onclick="loadStoreCatalog()">&#8635; Обновить витрину</button>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:var(--text-muted); margin-bottom:4px;">
+          <span>Память LittleFS:</span>
+          <span id="store-fs-info">Загрузка...</span>
+        </div>
+        <div class="progress-bar-container" style="display:block; margin-top:0;">
+          <div class="progress-bar" id="store-fs-bar" style="width:0%;"></div>
+        </div>
+      </div>
+
+      <div id="store-catalog-list" class="store-grid">
+        <div style="font-size:0.85rem; color:var(--text-muted); padding:10px;">Загрузка каталога с GitHub...</div>
+      </div>
+      <div id="store-status-msg" style="font-size:0.8rem; margin-top:8px;"></div>
+    </section>
+
     <!-- TELEMETRY -->
     <section class="card">
       <div class="card-title">&#128202; Телеметрия ESP32-C6</div>
@@ -581,6 +680,8 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     let isPowered = true;
     let isDragging = false;
     let lastStatusTime = 0;
+    let installedEffects = [];
+    let cachedEffectsList = [];
 
     function formatUptime(seconds) {
       const h = Math.floor(seconds / 3600);
@@ -760,15 +861,34 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           document.getElementById('val-mic-text').innerText = data.micSensitivity;
         }
 
-        // Highlight Active Effect
-        const btns = document.querySelectorAll('.effect-btn');
-        btns.forEach(b => {
-          if (parseInt(b.getAttribute('data-id')) === data.effect) {
-            b.classList.add('active');
-          } else {
-            b.classList.remove('active');
-          }
-        });
+        // Dynamic Effect Buttons Update
+        if (data.effects && JSON.stringify(data.effects) !== JSON.stringify(cachedEffectsList)) {
+          cachedEffectsList = data.effects;
+          const listContainer = document.getElementById('effects-list');
+          listContainer.innerHTML = '';
+          data.effects.forEach(e => {
+            const btn = document.createElement('button');
+            btn.className = 'effect-btn' + (e.index === data.effect ? ' active' : '');
+            btn.setAttribute('data-id', e.index);
+            btn.onclick = () => setEffect(e.index);
+            btn.innerHTML = `
+              <span class="effect-num">#${e.index}</span>
+              <span class="effect-name">${e.name}</span>
+              <span class="effect-sub">${e.index < 10 ? 'Базовый' : 'Custom .eff'}</span>
+            `;
+            listContainer.appendChild(btn);
+          });
+        } else {
+          // Highlight Active Effect
+          const btns = document.querySelectorAll('.effect-btn');
+          btns.forEach(b => {
+            if (parseInt(b.getAttribute('data-id')) === data.effect) {
+              b.classList.add('active');
+            } else {
+              b.classList.remove('active');
+            }
+          });
+        }
 
         // Telemetry Update
         document.getElementById('telem-temp').innerText = (data.cpuTemp !== undefined) ? data.cpuTemp.toFixed(1) : '--';
@@ -793,9 +913,154 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
-    // Initial fetch & polling every 1500 ms
+    // Effect Store Operations
+    async function fetchInstalled() {
+      try {
+        const res = await fetch('/api/store/installed');
+        if (!res.ok) return;
+        const data = await res.json();
+        installedEffects = data.installed || [];
+        if (data.totalBytes > 0) {
+          const usedKb = Math.round(data.usedBytes / 1024);
+          const totalKb = Math.round(data.totalBytes / 1024);
+          const pct = Math.min(100, Math.round((data.usedBytes / data.totalBytes) * 100));
+          document.getElementById('store-fs-info').innerText = `${usedKb} KB / ${totalKb} KB (${pct}%)`;
+          document.getElementById('store-fs-bar').style.width = pct + '%';
+        }
+      } catch (e) {
+        console.error('Installed effects fetch error:', e);
+      }
+    }
+
+    async function loadStoreCatalog() {
+      const msg = document.getElementById('store-status-msg');
+      const container = document.getElementById('store-catalog-list');
+      msg.innerText = '';
+      container.innerHTML = '<div style="font-size:0.85rem; color:var(--text-muted); padding:10px;">Загрузка каталога с GitHub...</div>';
+
+      await fetchInstalled();
+
+      let manifest = null;
+      try {
+        const ghRes = await fetch('https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/manifest.json', { cache: 'no-cache' });
+        if (ghRes.ok) {
+          manifest = await ghRes.json();
+        }
+      } catch (err) {
+        console.log('Direct GitHub fetch failed, trying local proxy:', err);
+      }
+
+      if (!manifest) {
+        try {
+          const localRes = await fetch('/api/store/catalog');
+          if (localRes.ok) {
+            manifest = await localRes.json();
+          }
+        } catch (err) {
+          console.error('Proxy catalog fetch failed:', err);
+        }
+      }
+
+      if (!manifest || !manifest.effects || manifest.effects.length === 0) {
+        container.innerHTML = '<div style="font-size:0.85rem; color:var(--danger); padding:10px;">Каталог эффектов временно недоступен. Проверьте интернет или повторите попытку.</div>';
+        return;
+      }
+
+      container.innerHTML = '';
+      manifest.effects.forEach(eff => {
+        const isInst = installedEffects.some(ie => ie.id === eff.id);
+        const card = document.createElement('div');
+        card.className = 'store-card';
+        card.innerHTML = `
+          <div class="store-header">
+            <span class="store-name">${eff.name}</span>
+            <span class="store-badge ${isInst ? 'installed' : 'available'}">${isInst ? 'Установлен' : 'Доступен'}</span>
+          </div>
+          <div class="store-desc">${eff.description || ''}</div>
+          <div class="store-meta">
+            <span>v${eff.version || '1.0'} &bull; ${eff.author || 'MagicLamp'}</span>
+            <span>${eff.size || 256} Б</span>
+          </div>
+          <div class="store-actions">
+            ${isInst
+              ? `<button class="btn btn-sm" onclick="activateCustomEffect('${eff.name}')">&#9654; Включить</button>
+                 <button class="btn btn-sm btn-danger" onclick="deleteStoreEffect('${eff.id}')">&#128465; Удалить</button>`
+              : `<button class="btn btn-sm" onclick="installStoreEffect('${eff.id}', '${eff.url || ''}')">&#128229; Скачать в лампу</button>`
+            }
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function activateCustomEffect(effectName) {
+      if (cachedEffectsList) {
+        const found = cachedEffectsList.find(e => e.name === effectName);
+        if (found) {
+          setEffect(found.index);
+          return;
+        }
+      }
+      sendControl({});
+    }
+
+    async function installStoreEffect(id, url) {
+      const msg = document.getElementById('store-status-msg');
+      msg.style.color = 'var(--text-muted)';
+      msg.innerText = `Скачивание эффекта '${id}' в LittleFS...`;
+      try {
+        const res = await fetch('/api/store/install', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id, url: url })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          msg.style.color = 'var(--success)';
+          msg.innerText = `Эффект '${id}' успешно загружен и активирован!`;
+          await fetchStatus();
+          await loadStoreCatalog();
+        } else {
+          msg.style.color = 'var(--danger)';
+          msg.innerText = 'Ошибка: ' + (data.message || 'Сбой установки');
+        }
+      } catch (e) {
+        msg.style.color = 'var(--danger)';
+        msg.innerText = 'Сбой сети: ' + e;
+      }
+    }
+
+    async function deleteStoreEffect(id) {
+      if (!confirm(`Удалить эффект '${id}' из LittleFS памяти лампы?`)) return;
+      const msg = document.getElementById('store-status-msg');
+      msg.style.color = 'var(--text-muted)';
+      msg.innerText = `Удаление '${id}'...`;
+      try {
+        const res = await fetch('/api/store/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          msg.style.color = 'var(--success)';
+          msg.innerText = `Эффект '${id}' удален.`;
+          await fetchStatus();
+          await loadStoreCatalog();
+        } else {
+          msg.style.color = 'var(--danger)';
+          msg.innerText = 'Ошибка: ' + (data.message || 'Сбой удаления');
+        }
+      } catch (e) {
+        msg.style.color = 'var(--danger)';
+        msg.innerText = 'Сбой сети: ' + e;
+      }
+    }
+
+    // Initial fetch & polling
     fetchStatus();
     setInterval(fetchStatus, 1500);
+    loadStoreCatalog();
   </script>
 </body>
 </html>

@@ -21,7 +21,8 @@ EffectManager::EffectManager()
       m_limitFlashStartTime(0),
       m_nvsDirty(false),
       m_nvsDirtyTime(0),
-      m_lastFrameTime(0) {
+      m_lastFrameTime(0),
+      m_totalEffects(NUM_CORE_EFFECTS) {
     // Instantiate all 10 core effect slots
     m_effects[0] = new EffectNightlight();
     m_effects[1] = new EffectDawnDusk();
@@ -33,10 +34,14 @@ EffectManager::EffectManager()
     m_effects[7] = new EffectSandHourglass();
     m_effects[8] = new EffectAudioReactive();
     m_effects[9] = new EffectFireflies();
+
+    for (int i = NUM_CORE_EFFECTS; i < MAX_TOTAL_EFFECTS; i++) {
+        m_effects[i] = nullptr;
+    }
 }
 
 EffectManager::~EffectManager() {
-    for (int i = 0; i < NUM_CORE_EFFECTS; i++) {
+    for (int i = 0; i < m_totalEffects; i++) {
         delete m_effects[i];
         m_effects[i] = nullptr;
     }
@@ -48,7 +53,7 @@ void EffectManager::begin(LedMatrix& matrix) {
 
     m_powerState = m_prefs.getBool("power", true);
     m_currentEffectIndex = m_prefs.getUChar("effect", 0);
-    if (m_currentEffectIndex >= NUM_CORE_EFFECTS) {
+    if (m_currentEffectIndex >= m_totalEffects) {
         m_currentEffectIndex = 0;
     }
 
@@ -147,15 +152,17 @@ void EffectManager::updateFade(LedMatrix& matrix) {
 }
 
 void EffectManager::nextEffect(LedMatrix& matrix) {
-    setEffect((m_currentEffectIndex + 1) % NUM_CORE_EFFECTS, matrix);
+    if (m_totalEffects == 0) return;
+    setEffect((m_currentEffectIndex + 1) % m_totalEffects, matrix);
 }
 
 void EffectManager::prevEffect(LedMatrix& matrix) {
-    setEffect((m_currentEffectIndex + NUM_CORE_EFFECTS - 1) % NUM_CORE_EFFECTS, matrix);
+    if (m_totalEffects == 0) return;
+    setEffect((m_currentEffectIndex + m_totalEffects - 1) % m_totalEffects, matrix);
 }
 
 void EffectManager::setEffect(uint8_t index, LedMatrix& matrix) {
-    if (index >= NUM_CORE_EFFECTS) {
+    if (index >= m_totalEffects) {
         index = 0;
     }
 
@@ -364,3 +371,40 @@ void EffectManager::updateNvs() {
                       m_micSensitivity);
     }
 }
+
+bool EffectManager::registerCustomEffect(Effect* effect) {
+    if (!effect || m_totalEffects >= MAX_TOTAL_EFFECTS) {
+        return false;
+    }
+    m_effects[m_totalEffects] = effect;
+    m_totalEffects++;
+    Serial.printf("[EffectManager] Registered custom effect [%d]: %s (total: %d)\n",
+                  m_totalEffects - 1, effect->getName(), m_totalEffects);
+    return true;
+}
+
+void EffectManager::clearCustomEffects() {
+    for (int i = NUM_CORE_EFFECTS; i < m_totalEffects; i++) {
+        delete m_effects[i];
+        m_effects[i] = nullptr;
+    }
+    m_totalEffects = NUM_CORE_EFFECTS;
+    if (m_currentEffectIndex >= m_totalEffects) {
+        m_currentEffectIndex = 0;
+    }
+}
+
+Effect* EffectManager::getEffect(uint8_t index) const {
+    if (index < m_totalEffects) {
+        return m_effects[index];
+    }
+    return nullptr;
+}
+
+const char* EffectManager::getEffectName(uint8_t index) const {
+    if (index < m_totalEffects && m_effects[index]) {
+        return m_effects[index]->getName();
+    }
+    return "Unknown";
+}
+

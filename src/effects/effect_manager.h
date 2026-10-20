@@ -8,8 +8,13 @@
 #include "hal/mic_i2s.h"
 
 #ifndef NUM_CORE_EFFECTS
-#define NUM_CORE_EFFECTS 9
+#define NUM_CORE_EFFECTS 10
 #endif
+
+#ifndef MAX_TOTAL_EFFECTS
+#define MAX_TOTAL_EFFECTS 24
+#endif
+
 
 #ifndef NVS_SAVE_DELAY_MS
 #define NVS_SAVE_DELAY_MS 3000
@@ -199,6 +204,33 @@ public:
      */
     bool isNvsDirty() const { return m_nvsDirty; }
 
+    /**
+     * @brief Register a dynamic custom effect (e.g. from LittleFS .eff).
+     * @param effect Pointer to allocated Effect instance (ownership transferred to EffectManager).
+     * @return true if registered, false if MAX_TOTAL_EFFECTS reached.
+     */
+    bool registerCustomEffect(Effect* effect);
+
+    /**
+     * @brief Remove and delete all dynamically loaded custom effects.
+     */
+    void clearCustomEffects();
+
+    /**
+     * @brief Get total number of active effects (core 10 + installed custom).
+     */
+    uint8_t getTotalEffects() const { return m_totalEffects; }
+
+    /**
+     * @brief Get effect pointer by index.
+     */
+    Effect* getEffect(uint8_t index) const;
+
+    /**
+     * @brief Get effect name by index.
+     */
+    const char* getEffectName(uint8_t index) const;
+
     enum class LimitFlashType : uint8_t {
         NONE = 0,
         MAX_LIMIT,
@@ -236,5 +268,7 @@ private:
     uint32_t m_nvsDirtyTime;
 
     uint32_t m_lastFrameTime;
-    Effect* m_effects[NUM_CORE_EFFECTS];
+    uint8_t m_totalEffects;
+    Effect* m_effects[MAX_TOTAL_EFFECTS];
 };
+

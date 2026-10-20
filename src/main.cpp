@@ -9,12 +9,14 @@
 #include "network/wifi_manager.h"
 #include "network/ota_github.h"
 #include "network/web_server.h"
+#include "network/store_manager.h"
 
 static ButtonDriver button(PIN_BUTTON, BUTTON_ACTIVE_LEVEL);
 static LedMatrix ledMatrix;
 static ImuMpu6050 imu(PIN_I2C_SDA, PIN_I2C_SCL, MPU6050_I2C_ADDR, IMU_SAMPLE_INTERVAL_MS, IMU_SHAKE_THRESHOLD);
 static MicI2S mic(PIN_MIC_SCK, PIN_MIC_WS, PIN_MIC_SD);
 static EffectManager effectManager;
+static StoreManager storeManager;
 static WiFiManager wifiManager;
 static OtaGithub otaGithub;
 static LampWebServer webServer;
@@ -72,14 +74,17 @@ void setup() {
     effectManager.begin(ledMatrix);
     Serial.println(F("[EffectManager] Engine ready with 10 core effects and NVS debounce."));
 
-    // 6. Initialize Wi-Fi Manager (STA or SoftAP + Captive Portal + mDNS + ArduinoOTA)
+    // 6. Initialize LittleFS and StoreManager (scan installed custom .eff effects)
+    storeManager.begin(&effectManager);
+
+    // 7. Initialize Wi-Fi Manager (STA or SoftAP + Captive Portal + mDNS + ArduinoOTA)
     wifiManager.begin();
 
-    // 7. Initialize GitHub OTA Updater
+    // 8. Initialize GitHub OTA Updater
     otaGithub.init();
 
-    // 8. Initialize WebServer & WebUI
-    webServer.begin(&effectManager, &ledMatrix, &mic, &imu, &wifiManager, &otaGithub);
+    // 9. Initialize WebServer & WebUI with Store endpoints
+    webServer.begin(&effectManager, &ledMatrix, &mic, &imu, &wifiManager, &otaGithub, &storeManager);
 
     Serial.println(F("Initialization complete. Entering main loop..."));
 }

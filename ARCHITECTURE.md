@@ -49,3 +49,23 @@
 - `src/hal/` — `led_matrix`, `button`, `mic_i2s`, `imu_mpu6050`
 - `src/effects/` — `effect_manager`, `core_effects`, `math_effects`, `audio_effect`
 - `src/network/` — `wifi_manager`, `ota_github`, `web_server`, `webui_html.h`
+
+## 6. Архитектура LittleFS, EffectVM и Магазина эффектов (Фаза 4)
+- **ВАЖНОЕ ОГРАНИЧЕНИЕ OTA:** Запрещено изменять файл `partitions.csv`! Использовать существующий раздел `littlefs` в текущей таблице разделов, чтобы сохранить 100% совместимость с беспроводным обновлением OTA с версии v0.4.0.
+- **Движок подгружаемых эффектов `EffectVM` (`src/effects/effect_vm.h`, `src/effects/effect_vm.cpp`):**
+  - Читает компактные JSON/ключ-значение дескрипторы эффектов `.eff` из LittleFS (`/effects/<id>.eff`).
+  - Поддерживает настраиваемые цветовые палитры, параметры скорости/масштаба/интенсивности и 6 параметрических/шейдерных ядер рендеринга на бесшовном цилиндре 16x16 (60 FPS):
+    1) `aurora` (Северное сияние — волнообразные вертикальные ленты с шумом Перлина),
+    2) `matrix_rain` (Цифровой дождь «Матрица» с бегущими вертикальными шлейфами),
+    3) `lava_lamp` (Лава-лампа — медленная тепловая конвекция крупных восковых капель),
+    4) `vortex` (Галактическая спираль — вращающиеся спиральные рукава вокруг цилиндра),
+    5) `fireworks` (Фейерверк — пуск ракет снизу вверх и кольцевой разлет искр с гравитацией),
+    6) `cyber_pulse` (Киберпанк-пульс — неоновые кольца и математический RPN/волновой шейдер с реакцией на звук/время).
+- **Менеджер магазина `StoreManager` (`src/network/store_manager.h`, `src/network/store_manager.cpp`):**
+  - Монтирует `LittleFS.begin(true)` при старте, сканирует `/effects/*.eff` и регистрирует их в `EffectManager`.
+  - Умеет по HTTPS (`WiFiClientSecure` с `setInsecure()` + `HTTPClient` с `HTTPC_STRICT_FOLLOW_REDIRECTS`) скачивать файл `.eff` из `https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/effects/<id>.eff`, проверять его валидность, сохранять в `/effects/<id>.eff` и сразу активировать эффект без перезагрузки лампы.
+- **Новые REST API эндпоинты в `WebServer`:**
+  - `GET /api/store/installed` — список установленных в LittleFS `.eff` эффектов + статистика памяти LittleFS (`usedBytes`, `totalBytes`).
+  - `GET /api/store/catalog` — проксирование/кеширование или получение `manifest.json` с GitHub (`https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/manifest.json`), плюс в самом WebUI фронтенде прямой `fetch` каталога с GitHub Raw с fallback на `/api/store/catalog`.
+  - `POST /api/store/install` — скачивание и установка выбранного эффекта (`id`, `url`) с GitHub в LittleFS.
+  - `POST /api/store/delete` — удаление `/effects/<id>.eff` из LittleFS.

@@ -1,0 +1,10 @@
+{
+  "id": "fireworks",
+  "name": "Фейерверк",
+  "engine": "fireworks",
+  "speed": 130,
+  "scale": 128,
+  "intensity": 255,
+  "palette": "rainbow",
+  "description": "Пуск светящихся ракет снизу вверх и круговой взрыв россыпи искр под действием гравитации"
+}

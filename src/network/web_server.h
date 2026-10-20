@@ -9,6 +9,7 @@ class MicI2S;
 class ImuMpu6050;
 class WiFiManager;
 class OtaGithub;
+class StoreManager;
 
 /**
  * @file web_server.h
@@ -20,6 +21,7 @@ class OtaGithub;
  * - Real-time lamp control (POST /api/control).
  * - GitHub Silent OTA trigger (POST /api/ota/check).
  * - Direct browser firmware upload via Update.h (POST /api/ota/upload).
+ * - GitHub Effect Store endpoints (GET /api/store/installed, GET /api/store/catalog, POST /api/store/install, POST /api/store/delete).
  * - Wi-Fi credentials configuration (POST /api/wifi).
  * - Captive Portal redirection when in SoftAP setup mode.
  */
@@ -30,19 +32,14 @@ public:
 
     /**
      * @brief Initialize web server, configure REST routes and start listening.
-     * @param effectMgr Pointer to EffectManager instance.
-     * @param matrix Pointer to LedMatrix driver.
-     * @param mic Pointer to MicI2S driver.
-     * @param imu Pointer to ImuMpu6050 driver.
-     * @param wifi Pointer to WiFiManager instance.
-     * @param ota Pointer to OtaGithub updater.
      */
     void begin(EffectManager* effectMgr,
                LedMatrix* matrix,
                MicI2S* mic,
                ImuMpu6050* imu,
                WiFiManager* wifi,
-               OtaGithub* ota);
+               OtaGithub* ota,
+               StoreManager* store = nullptr);
 
     /**
      * @brief Process incoming client HTTP requests. Call frequently in loop().
@@ -58,6 +55,7 @@ private:
     ImuMpu6050* m_imu;
     WiFiManager* m_wifi;
     OtaGithub* m_ota;
+    StoreManager* m_store;
 
     bool m_rebootPending;
     unsigned long m_rebootTime;
@@ -69,5 +67,10 @@ private:
     void handleControl();
     void handleOtaCheck();
     void handleWifi();
+    void handleStoreInstalled();
+    void handleStoreCatalog();
+    void handleStoreInstall();
+    void handleStoreDelete();
     void handleNotFound();
 };
+

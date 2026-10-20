@@ -1,0 +1,10 @@
+{
+  "id": "cyber_pulse",
+  "name": "Кибер-пульс",
+  "engine": "cyber_pulse",
+  "speed": 145,
+  "scale": 130,
+  "intensity": 255,
+  "palette": "cyber",
+  "description": "Неоновые кольца Synthwave и круговой волновой шейдер с динамической реакцией на звук и биты"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "matrix_rain",
+  "name": "Матрица",
+  "engine": "matrix_rain",
+  "speed": 140,
+  "scale": 128,
+  "intensity": 255,
+  "palette": "matrix",
+  "description": "Классический цифровой зеленый дождь с бегущими вертикальными кодовыми шлейфами"
+}

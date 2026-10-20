@@ -1,0 +1,67 @@
+{
+  "storeVersion": "1.0.0",
+  "repository": "https://github.com/gaterkik/MagicLamp",
+  "updatedAt": "2026-10-20",
+  "effects": [
+    {
+      "id": "aurora",
+      "name": "Северное сияние",
+      "description": "Волнообразные вертикальные ленты с шумом Перлина в изумрудно-бирюзовых и фиолетовых тонах",
+      "version": "1.0.0",
+      "author": "MagicLamp Team",
+      "engine": "aurora",
+      "size": 349,
+      "url": "https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/effects/aurora.eff"
+    },
+    {
+      "id": "matrix_rain",
+      "name": "Матрица",
+      "description": "Классический цифровой зеленый дождь с бегущими вертикальными кодовыми шлейфами",
+      "version": "1.0.0",
+      "author": "MagicLamp Team",
+      "engine": "matrix_rain",
+      "size": 325,
+      "url": "https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/effects/matrix_rain.eff"
+    },
+    {
+      "id": "lava_lamp",
+      "name": "Лава-лампа",
+      "description": "Медленная тепловая конвекция крупных расплавленных восковых капель с мягким слиянием",
+      "version": "1.0.0",
+      "author": "MagicLamp Team",
+      "engine": "lava_lamp",
+      "size": 335,
+      "url": "https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/effects/lava_lamp.eff"
+    },
+    {
+      "id": "vortex",
+      "name": "Галактика",
+      "description": "Вращающиеся спиральные галактические рукава, бесшовно обвивающие цилиндр лампы",
+      "version": "1.0.0",
+      "author": "MagicLamp Team",
+      "engine": "vortex",
+      "size": 318,
+      "url": "https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/effects/vortex.eff"
+    },
+    {
+      "id": "fireworks",
+      "name": "Фейерверк",
+      "description": "Пуск светящихся ракет снизу вверх и круговой взрыв россыпи искр под действием гравитации",
+      "version": "1.0.0",
+      "author": "MagicLamp Team",
+      "engine": "fireworks",
+      "size": 342,
+      "url": "https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/effects/fireworks.eff"
+    },
+    {
+      "id": "cyber_pulse",
+      "name": "Кибер-пульс",
+      "description": "Неоновые кольца Synthwave и круговой волновой шейдер с динамической реакцией на звук и биты",
+      "version": "1.0.0",
+      "author": "MagicLamp Team",
+      "engine": "cyber_pulse",
+      "size": 343,
+      "url": "https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/effects/cyber_pulse.eff"
+    }
+  ]
+}
