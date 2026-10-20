@@ -177,6 +177,10 @@ private:
     uint8_t i2cReadByte(bool ack);
 
     void recoverBus(uint8_t sda, uint8_t scl);
+    bool checkLinesPullup(uint8_t sda, uint8_t scl);
+    bool initSensor(uint8_t addr, uint8_t sda, uint8_t scl);
+    bool probeAddresses(uint8_t sda, uint8_t scl, const uint8_t* addrs, size_t count);
+    bool quickProbe();
     bool scanPair(uint8_t sda, uint8_t scl);
     bool scanPins();
     bool readRawData(int16_t& ax, int16_t& ay, int16_t& az);

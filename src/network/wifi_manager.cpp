@@ -78,6 +78,10 @@ void WiFiManager::update() {
                 Serial.printf("[WiFi] Connected successfully! IP: %s, RSSI: %d dBm (Radio Sleep: OFF, AP: OFF)\n",
                               WiFi.localIP().toString().c_str(), WiFi.RSSI());
 
+                // Configure NTP time synchronization (GMT+2: 7200 sec, fixed UTC+2)
+                configTime(7200, 0, "pool.ntp.org", "time.google.com");
+                Serial.println(F("[NTP] Configured time synchronization (GMT+2: 7200s, servers: pool.ntp.org, time.google.com)"));
+
                 // Start mDNS
                 if (MDNS.begin(HOSTNAME)) {
                     Serial.printf("[mDNS] Responder started: http://%s.local\n", HOSTNAME);
@@ -192,4 +196,25 @@ void WiFiManager::resetCredentials() {
     _password = "";
     Serial.println(F("[WiFi] Cleared Wi-Fi credentials in NVS. Starting SoftAP."));
     startApMode();
+}
+
+bool WiFiManager::getLocalTime(struct tm *info) const {
+    if (!info) return false;
+    return ::getLocalTime(info, 10);
+}
+
+String WiFiManager::getFormattedTime() const {
+    struct tm timeinfo;
+    if (::getLocalTime(&timeinfo, 10)) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+        return String(buf);
+    }
+    return String("--:--");
+}
+
+bool WiFiManager::isTimeSynced() const {
+    time_t now;
+    time(&now);
+    return (now > 100000);
 }

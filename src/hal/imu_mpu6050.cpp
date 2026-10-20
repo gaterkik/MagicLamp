@@ -134,10 +134,139 @@ void ImuMpu6050::recoverBus(uint8_t sda, uint8_t scl) {
     delayMicroseconds(50);
 }
 
+bool ImuMpu6050::checkLinesPullup(uint8_t sda, uint8_t scl) {
+    pinMode(sda, INPUT_PULLDOWN);
+    pinMode(scl, INPUT_PULLDOWN);
+    delayMicroseconds(50);
+    int sdaLvl = digitalRead(sda);
+    int sclLvl = digitalRead(scl);
+    pinMode(sda, INPUT_PULLUP);
+    pinMode(scl, INPUT_PULLUP);
+    delayMicroseconds(10);
+
+    if (sdaLvl == LOW || sclLvl == LOW) {
+        snprintf(m_statusStr, sizeof(m_statusStr), "Check SDA/SCL connection");
+        return false;
+    }
+    return true;
+}
+
+bool ImuMpu6050::initSensor(uint8_t addr, uint8_t sda, uint8_t scl) {
+    m_i2cAddr = addr;
+    m_activeSda = sda;
+    m_activeScl = scl;
+
+    // Read WHO_AM_I register (0x75)
+    uint8_t who = 0;
+    i2cStart();
+    if (i2cWriteByte((addr << 1) | 0)) {
+        if (i2cWriteByte(REG_WHO_AM_I)) {
+            i2cStart(); // Repeated start
+            if (i2cWriteByte((addr << 1) | 1)) {
+                who = i2cReadByte(false); // NACK on last byte
+            }
+        }
+    }
+    i2cStop();
+    m_whoAmI = who;
+
+    // Wake up sensor: write 0x00 to PWR_MGMT_1 (0x6B)
+    i2cStart();
+    if (i2cWriteByte((addr << 1) | 0)) {
+        i2cWriteByte(REG_PWR_MGMT_1);
+        i2cWriteByte(0x00);
+    }
+    i2cStop();
+    delayMicroseconds(5000);
+
+    // Configure DLPF (~44 Hz bandwidth: CONFIG = 0x03)
+    i2cStart();
+    if (i2cWriteByte((addr << 1) | 0)) {
+        i2cWriteByte(REG_CONFIG);
+        i2cWriteByte(0x03);
+    }
+    i2cStop();
+
+    // Configure Accelerometer Range (+/- 2g: ACCEL_CONFIG = 0x00, 16384 LSB/g)
+    i2cStart();
+    if (i2cWriteByte((addr << 1) | 0)) {
+        i2cWriteByte(REG_ACCEL_CONFIG);
+        i2cWriteByte(0x00);
+    }
+    i2cStop();
+
+    // Verify acceleration read
+    int16_t ax = 0, ay = 0, az = 0;
+    if (readRawData(ax, ay, az)) {
+        m_rawAx = static_cast<float>(ax) / 16384.0f;
+        m_rawAy = static_cast<float>(ay) / 16384.0f;
+        m_rawAz = static_cast<float>(az) / 16384.0f;
+        m_gx = m_rawAx;
+        m_gy = m_rawAy;
+        m_gz = m_rawAz;
+        float norm = sqrtf(m_gx * m_gx + m_gy * m_gy + m_gz * m_gz);
+        if (norm > 0.001f) {
+            m_gx /= norm;
+            m_gy /= norm;
+            m_gz /= norm;
+        } else {
+            m_gx = 0.0f;
+            m_gy = -1.0f;
+            m_gz = 0.0f;
+        }
+    }
+
+    m_fallback = false;
+    m_consecutiveErrors = 0;
+
+    snprintf(m_statusStr, sizeof(m_statusStr),
+             "Online (addr:0x%02X, who:0x%02X, SDA:%d, SCL:%d)",
+             m_i2cAddr, m_whoAmI, m_activeSda, m_activeScl);
+    Serial.printf("[IMU] Sensor detected: %s\n", m_statusStr);
+    return true;
+}
+
+bool ImuMpu6050::probeAddresses(uint8_t sda, uint8_t scl, const uint8_t* addrs, size_t count) {
+    m_activeSda = sda;
+    m_activeScl = scl;
+
+    if (!checkLinesPullup(sda, scl)) {
+        return false;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        uint8_t addr = addrs[i];
+        i2cStart();
+        bool ack = i2cWriteByte((addr << 1) | 0);
+        i2cStop();
+        if (ack) {
+            return initSensor(addr, sda, scl);
+        }
+    }
+    return false;
+}
+
+bool ImuMpu6050::quickProbe() {
+    static const uint8_t MPU_ADDRS[] = { 0x68, 0x69 };
+    // Probe primary pair first
+    if (probeAddresses(m_sdaPin, m_sclPin, MPU_ADDRS, 2)) {
+        return true;
+    }
+    // Probe mirror pair
+    if (probeAddresses(m_sclPin, m_sdaPin, MPU_ADDRS, 2)) {
+        return true;
+    }
+    return false;
+}
+
 bool ImuMpu6050::scanPair(uint8_t sda, uint8_t scl) {
     m_activeSda = sda;
     m_activeScl = scl;
     recoverBus(sda, scl);
+
+    if (!checkLinesPullup(sda, scl)) {
+        return false;
+    }
 
     for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
         i2cStart();
@@ -145,78 +274,7 @@ bool ImuMpu6050::scanPair(uint8_t sda, uint8_t scl) {
         i2cStop();
 
         if (ack) {
-            m_i2cAddr = addr;
-            m_activeSda = sda;
-            m_activeScl = scl;
-
-            // Read WHO_AM_I register (0x75)
-            uint8_t who = 0;
-            i2cStart();
-            if (i2cWriteByte((addr << 1) | 0)) {
-                if (i2cWriteByte(REG_WHO_AM_I)) {
-                    i2cStart(); // Repeated start
-                    if (i2cWriteByte((addr << 1) | 1)) {
-                        who = i2cReadByte(false); // NACK on last byte
-                    }
-                }
-            }
-            i2cStop();
-            m_whoAmI = who;
-
-            // Wake up sensor: write 0x00 to PWR_MGMT_1 (0x6B)
-            i2cStart();
-            if (i2cWriteByte((addr << 1) | 0)) {
-                i2cWriteByte(REG_PWR_MGMT_1);
-                i2cWriteByte(0x00);
-            }
-            i2cStop();
-            delayMicroseconds(5000);
-
-            // Configure DLPF (~44 Hz bandwidth: CONFIG = 0x03)
-            i2cStart();
-            if (i2cWriteByte((addr << 1) | 0)) {
-                i2cWriteByte(REG_CONFIG);
-                i2cWriteByte(0x03);
-            }
-            i2cStop();
-
-            // Configure Accelerometer Range (+/- 2g: ACCEL_CONFIG = 0x00, 16384 LSB/g)
-            i2cStart();
-            if (i2cWriteByte((addr << 1) | 0)) {
-                i2cWriteByte(REG_ACCEL_CONFIG);
-                i2cWriteByte(0x00);
-            }
-            i2cStop();
-
-            // Verify acceleration read
-            int16_t ax = 0, ay = 0, az = 0;
-            if (readRawData(ax, ay, az)) {
-                m_rawAx = static_cast<float>(ax) / 16384.0f;
-                m_rawAy = static_cast<float>(ay) / 16384.0f;
-                m_rawAz = static_cast<float>(az) / 16384.0f;
-                m_gx = m_rawAx;
-                m_gy = m_rawAy;
-                m_gz = m_rawAz;
-                float norm = sqrtf(m_gx * m_gx + m_gy * m_gy + m_gz * m_gz);
-                if (norm > 0.001f) {
-                    m_gx /= norm;
-                    m_gy /= norm;
-                    m_gz /= norm;
-                } else {
-                    m_gx = 0.0f;
-                    m_gy = -1.0f;
-                    m_gz = 0.0f;
-                }
-            }
-
-            m_fallback = false;
-            m_consecutiveErrors = 0;
-
-            snprintf(m_statusStr, sizeof(m_statusStr),
-                     "Online (addr:0x%02X, who:0x%02X, SDA:%d, SCL:%d)",
-                     m_i2cAddr, m_whoAmI, m_activeSda, m_activeScl);
-            Serial.printf("[IMU] Sensor detected: %s\n", m_statusStr);
-            return true;
+            return initSensor(addr, sda, scl);
         }
     }
 
@@ -224,27 +282,26 @@ bool ImuMpu6050::scanPair(uint8_t sda, uint8_t scl) {
 }
 
 bool ImuMpu6050::scanPins() {
-    // 1. Scan primary pair (SDA=m_sdaPin, SCL=m_sclPin) across 0x08..0x77
+    // 1. Line check with pulldown test
+    if (!checkLinesPullup(m_sdaPin, m_sclPin)) {
+        Serial.printf("[IMU] %s. Activating Graceful Fallback mode.\n", m_statusStr);
+        m_fallback = true;
+        updateFallback(millis());
+        return false;
+    }
+
+    // 2. Scan primary pair (SDA=m_sdaPin, SCL=m_sclPin) across 0x08..0x77
     if (scanPair(m_sdaPin, m_sclPin)) {
         return true;
     }
 
-    // 2. Scan mirror pair (SDA=m_sclPin, SCL=m_sdaPin) across 0x08..0x77
+    // 3. Scan mirror pair (SDA=m_sclPin, SCL=m_sdaPin) across 0x08..0x77
     if (scanPair(m_sclPin, m_sdaPin)) {
         return true;
     }
 
-    // 3. Neither responded: read electrical levels of pins 5 and 6
-    pinMode(m_sdaPin, INPUT_PULLUP);
-    pinMode(m_sclPin, INPUT_PULLUP);
-    delayMicroseconds(20);
-    int sdaLvl = digitalRead(m_sdaPin);
-    int sclLvl = digitalRead(m_sclPin);
-
-    snprintf(m_statusStr, sizeof(m_statusStr),
-             "No I2C ACK on 5/6 (SDA:%s, SCL:%s)",
-             sdaLvl == HIGH ? "HIGH" : "LOW",
-             sclLvl == HIGH ? "HIGH" : "LOW");
+    // 4. Lines have pullup but no chip responded
+    snprintf(m_statusStr, sizeof(m_statusStr), "No I2C ACK on 5/6 (SDA:HIGH, SCL:HIGH)");
     Serial.printf("[IMU] %s. Activating Graceful Fallback mode.\n", m_statusStr);
 
     m_fallback = true;
@@ -254,6 +311,9 @@ bool ImuMpu6050::scanPins() {
 
 bool ImuMpu6050::begin() {
     m_lastAutoScanTime = millis();
+    if (quickProbe()) {
+        return true;
+    }
     return scanPins();
 }
 
@@ -297,10 +357,10 @@ void ImuMpu6050::update() {
 
     if (m_fallback) {
         updateFallback(now);
-        // Periodic background auto-scan every 5 seconds if sensor is offline
+        // Periodic background auto-scan every 5 seconds if sensor is offline (probes only 0x68/0x69 in < 0.3 ms)
         if (now - m_lastAutoScanTime >= 5000) {
             m_lastAutoScanTime = now;
-            if (scanPins()) {
+            if (quickProbe()) {
                 Serial.printf("[IMU] Sensor recovered during background scan: %s\n", m_statusStr);
             }
         }
@@ -313,7 +373,7 @@ void ImuMpu6050::update() {
         if (m_consecutiveErrors >= 5) {
             Serial.println(F("[IMU] WARNING: Too many I2C read errors. Switching to Graceful Fallback mode."));
             m_fallback = true;
-            scanPins();
+            quickProbe();
             m_lastAutoScanTime = now;
             updateFallback(now);
         }

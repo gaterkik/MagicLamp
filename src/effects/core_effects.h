@@ -23,9 +23,11 @@ public:
     void init(LedMatrix& matrix) override;
     void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
     const char* getName() const override { return "DawnDusk"; }
+    void setSchedule(const ScheduleConfig* schedule) { m_schedule = schedule; }
 
 private:
     uint32_t m_cycleStartTime = 0;
+    const ScheduleConfig* m_schedule = nullptr;
 };
 
 class EffectFire : public Effect {
@@ -65,6 +67,9 @@ public:
 private:
     uint16_t m_xCoords[MATRIX_WIDTH];
     uint16_t m_yCoords[MATRIX_WIDTH];
+    float m_zAccum = 0.0f;
+    float m_colorAccum = 0.0f;
+    uint32_t m_lastPerlinTime = 0;
 };
 
 class EffectFireflies : public Effect {

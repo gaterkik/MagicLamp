@@ -83,6 +83,22 @@ protected:
     uint8_t m_speed = 128;
 };
 
+struct EffectProfile {
+    uint8_t brightness = 128;
+    uint8_t speed = 128;
+    uint8_t sensitivity = 128;
+};
+
+struct ScheduleConfig {
+    bool enabled = false;
+    uint8_t dawnHour = 7;
+    uint8_t dawnMinute = 0;
+    uint8_t dawnDurationMin = 10; // 5-15 min (default: 10)
+    uint8_t duskHour = 23;
+    uint8_t duskMinute = 0;
+    uint8_t duskDurationMin = 30; // 30 min
+};
+
 class EffectManager {
 public:
     EffectManager();
@@ -243,9 +259,32 @@ public:
      */
     void triggerLimitFlash(LimitFlashType type);
 
+    /**
+     * @brief Get individual profile for effect by index.
+     */
+    EffectProfile getProfile(uint8_t index) const;
+
+    /**
+     * @brief Set individual profile for effect by index.
+     */
+    void setProfile(uint8_t index, const EffectProfile& prof);
+
+    /**
+     * @brief Get Dawn/Dusk schedule configuration.
+     */
+    ScheduleConfig getSchedule() const { return m_schedule; }
+
+    /**
+     * @brief Set Dawn/Dusk schedule configuration.
+     */
+    void setSchedule(const ScheduleConfig& cfg);
+
 private:
     void markNvsDirty();
     void updateNvs();
+    void markProfilesDirty();
+    void updateProfilesNvs();
+    void updateSchedule(LedMatrix& matrix);
     void updateFade(LedMatrix& matrix);
     void renderLimitFlash(LedMatrix& matrix);
 
@@ -257,6 +296,13 @@ private:
 
     uint8_t m_speed;
     uint8_t m_micSensitivity;
+
+    EffectProfile m_profiles[MAX_TOTAL_EFFECTS];
+    bool m_profilesDirty;
+    uint32_t m_profileSaveTime;
+
+    ScheduleConfig m_schedule;
+    uint32_t m_lastScheduleCheckTime;
 
     bool m_dimmerDirUp;
     uint32_t m_lastDimmerStepTime;

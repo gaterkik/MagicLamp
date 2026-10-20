@@ -461,9 +461,15 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div style="font-size:0.75rem; color:var(--text-muted);">ESP32-C6 Interactive Light</div>
         </div>
       </div>
-      <div id="conn-badge" class="status-badge">
-        <span class="dot"></span>
-        <span id="conn-text">Online</span>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div id="clock-box" style="display:flex; align-items:center; gap:5px; font-size:0.95rem; font-weight:600; color:var(--primary); background:rgba(56,189,248,0.1); padding:4px 10px; border-radius:9999px; border:1px solid rgba(56,189,248,0.25);">
+          <span>&#128339;</span>
+          <span id="lamp-time">--:--</span>
+        </div>
+        <div id="conn-badge" class="status-badge">
+          <span class="dot"></span>
+          <span id="conn-text">Online</span>
+        </div>
       </div>
     </header>
 
@@ -482,7 +488,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </button>
       </div>
 
-      <div class="slider-group">
+      <div class="slider-group" id="group-bright">
         <div class="slider-header">
           <span>Яркость матрицы</span>
           <span id="val-bright-text" class="slider-val">128 (50%)</span>
@@ -491,7 +497,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                oninput="onBrightnessInput(this.value)" onchange="sendControl({brightness: parseInt(this.value)})">
       </div>
 
-      <div class="slider-group">
+      <div class="slider-group" id="group-speed">
         <div class="slider-header">
           <span>Скорость анимации</span>
           <span id="val-speed-text" class="slider-val">128</span>
@@ -500,13 +506,41 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                oninput="onSpeedInput(this.value)" onchange="sendControl({speed: parseInt(this.value)})">
       </div>
 
-      <div class="slider-group">
+      <div class="slider-group" id="group-mic">
         <div class="slider-header">
           <span>Чувствительность микрофона</span>
           <span id="val-mic-text" class="slider-val">128</span>
         </div>
         <input type="range" id="slider-mic" min="1" max="255" value="128"
                oninput="onMicInput(this.value)" onchange="sendControl({micSensitivity: parseInt(this.value)})">
+      </div>
+    </section>
+
+    <!-- SCHEDULE (DAWN / DUSK) -->
+    <section class="card">
+      <div class="card-title">&#9200; Расписание (Рассвет / Отбой)</div>
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:600;">Автоматическое расписание</div>
+            <div style="font-size:0.8rem; color:var(--text-muted);">Рассвет утром и мягкий отбой перед сном</div>
+          </div>
+          <button id="btn-sched-toggle" class="power-btn" style="padding:6px 16px; font-size:0.85rem;" onclick="toggleSchedule()">
+            <span id="sched-status-text">ВЫКЛ</span>
+          </button>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div style="background:#1e293b; padding:12px; border-radius:8px; border:1px solid var(--card-border);">
+            <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:6px;">&#127749; Рассвет (Будильник)</div>
+            <input type="time" id="sched-dawn-time" value="07:00" style="background:#0f172a; border:1px solid #334155; color:var(--text); padding:8px; border-radius:6px; width:100%; font-size:1rem;" onchange="saveScheduleTimes()">
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Плавный подъем 10 мин</div>
+          </div>
+          <div style="background:#1e293b; padding:12px; border-radius:8px; border:1px solid var(--card-border);">
+            <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:6px;">&#127769; Отбой (Сон)</div>
+            <input type="time" id="sched-dusk-time" value="23:00" style="background:#0f172a; border:1px solid #334155; color:var(--text); padding:8px; border-radius:6px; width:100%; font-size:1rem;" onchange="saveScheduleTimes()">
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Мягкое затухание 30 мин</div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -680,6 +714,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   <script>
     let isPowered = true;
     let isDragging = false;
+    let isScheduleEnabled = false;
     let lastStatusTime = 0;
     let installedEffects = [];
     let cachedEffectsList = [];
@@ -689,6 +724,66 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const m = Math.floor((seconds % 3600) / 60);
       const s = seconds % 60;
       return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+
+    function updateSlidersVisibility(effectId, effectName) {
+      const groupSpeed = document.getElementById('group-speed');
+      const groupMic = document.getElementById('group-mic');
+      if (!groupSpeed || !groupMic) return;
+
+      const numId = parseInt(effectId, 10);
+
+      // Resolve effect name if not provided
+      if (!effectName && cachedEffectsList && cachedEffectsList.length) {
+        const found = cachedEffectsList.find(e => e.index == numId);
+        if (found) effectName = found.name;
+      }
+
+      // Speed slider visible for: 2 (Fire), 3 (Noise), 4 (Life), 5 (Lorenz), 6 (Metaballs), 9 (Fireflies),
+      // and loaded VM effects (aurora, matrix_rain, lava_lamp, vortex, cyber_pulse).
+      // Hidden for: 0 (Nightlight), 1 (DawnDusk), 7 (SandHourglass), 8 (AudioReactive), and fireworks.
+      const speedEffects = [2, 3, 4, 5, 6, 9];
+      let hasSpeed = false;
+
+      if (numId < 10) {
+        hasSpeed = speedEffects.includes(numId);
+      } else {
+        const nameLow = (effectName || '').toLowerCase();
+        const isFireworks = nameLow.includes('firework') || nameLow.includes('фейерверк');
+        hasSpeed = !isFireworks;
+      }
+
+      groupSpeed.style.display = hasSpeed ? 'block' : 'none';
+
+      // Mic sensitivity slider visible ONLY for effect 8 (AudioReactive)
+      const hasMic = (numId === 8);
+      groupMic.style.display = hasMic ? 'block' : 'none';
+    }
+
+    function updateScheduleUI(enabled) {
+      isScheduleEnabled = enabled;
+      const btn = document.getElementById('btn-sched-toggle');
+      const txt = document.getElementById('sched-status-text');
+      if (btn && txt) {
+        if (enabled) {
+          btn.className = 'power-btn on';
+          txt.innerText = 'ВКЛ';
+        } else {
+          btn.className = 'power-btn';
+          txt.innerText = 'ВЫКЛ';
+        }
+      }
+    }
+
+    function toggleSchedule() {
+      updateScheduleUI(!isScheduleEnabled);
+      sendControl({ scheduleEnabled: isScheduleEnabled });
+    }
+
+    function saveScheduleTimes() {
+      const dawnVal = document.getElementById('sched-dawn-time').value;
+      const duskVal = document.getElementById('sched-dusk-time').value;
+      sendControl({ dawnTime: dawnVal, duskTime: duskVal });
     }
 
     function onBrightnessInput(val) {
@@ -725,7 +820,14 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     function setEffect(id) {
-      sendControl({ effect: id });
+      const numId = parseInt(id, 10);
+      let effName = '';
+      if (cachedEffectsList && cachedEffectsList.length) {
+        const found = cachedEffectsList.find(e => e.index == numId);
+        if (found) effName = found.name;
+      }
+      updateSlidersVisibility(numId, effName);
+      sendControl({ effect: numId });
     }
 
     async function triggerGithubOta() {
@@ -860,6 +962,25 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           const sMic = document.getElementById('slider-mic');
           sMic.value = data.micSensitivity;
           document.getElementById('val-mic-text').innerText = data.micSensitivity;
+        }
+
+        // Dynamic Slider Visibility based on active effect
+        updateSlidersVisibility(data.effect, data.effectName);
+
+        // Update Lamp Clock & Schedule
+        if (data.time) {
+          document.getElementById('lamp-time').innerText = data.time;
+        }
+        if (data.scheduleEnabled !== undefined) {
+          updateScheduleUI(data.scheduleEnabled);
+        }
+        const dawnInp = document.getElementById('sched-dawn-time');
+        if (dawnInp && document.activeElement !== dawnInp && data.dawnTime) {
+          dawnInp.value = data.dawnTime;
+        }
+        const duskInp = document.getElementById('sched-dusk-time');
+        if (duskInp && document.activeElement !== duskInp && data.duskTime) {
+          duskInp.value = data.duskTime;
         }
 
         // Dynamic Effect Buttons Update

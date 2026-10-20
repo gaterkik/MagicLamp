@@ -18,17 +18,21 @@ void EffectNightlight::update(LedMatrix& matrix, const ImuMpu6050& imu, const Mi
     uint32_t now = millis();
     // Gentle breathing modulation (~4 second cycle)
     uint8_t breath = sin8(static_cast<uint8_t>(now / 16));
-    uint8_t briScale = map(breath, 0, 255, 215, 255);
+    float breathFactor = 0.90f + 0.10f * (static_cast<float>(breath) / 255.0f);
 
-    // Warm candle / 2700K incandescent base
-    CRGB baseWarm = CRGB(255, 147, 41);
-    baseWarm.nscale8_video(briScale);
-
+    // Warm candle / 2700K incandescent base (R:255, G:147, B:41)
+    // Scaled so average LED current at master brightness 255 does not exceed 9.5 mA (total < 2450 mA)
+    // This guarantees FastLED power limiter NEVER caps brightness, eliminating the 50% plateau!
     for (int y = 0; y < MATRIX_HEIGHT; y++) {
-        // Subtle vertical gradient (slightly warmer/richer at bottom Y=0)
-        uint8_t rowDim = 255 - (y * 4);
-        CRGB col = baseWarm;
-        col.nscale8_video(rowDim);
+        // Frosted lantern organic vertical gradient:
+        // Warm candle glow at bottom Y=0 diffusing to soft ambient at Y=15
+        float relY = static_cast<float>(y) / static_cast<float>(MATRIX_HEIGHT - 1);
+        float vertFactor = 0.50f + 0.50f * (1.0f - relY * 0.75f);
+
+        uint8_t r = static_cast<uint8_t>(constrain(static_cast<int>(95.0f * vertFactor * breathFactor), 0, 255));
+        uint8_t g = static_cast<uint8_t>(constrain(static_cast<int>(54.0f * vertFactor * breathFactor), 0, 255));
+        uint8_t b = static_cast<uint8_t>(constrain(static_cast<int>(15.0f * vertFactor * breathFactor), 0, 255));
+        CRGB col = CRGB(r, g, b);
 
         for (int x = 0; x < MATRIX_WIDTH; x++) {
             matrix.setPixel(x, y, col);
@@ -47,12 +51,108 @@ void EffectDawnDusk::init(LedMatrix& matrix) {
 
 void EffectDawnDusk::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
     uint32_t now = millis();
-    float cyclePhase = 0.0f; // 0.0 .. 1.0 (0=Midnight, 0.25=Dawn, 0.5=Noon, 0.75=Dusk)
-
     time_t rawtime;
     time(&rawtime);
-    if (rawtime > 100000) {
-        // Valid system time present: apply GMT+2 offset (+7200 seconds)
+    bool validTime = (rawtime > 100000);
+
+    // 1. Check schedule if active and system time is synchronized
+    if (validTime && m_schedule && m_schedule->enabled) {
+        time_t localTime = rawtime + TIMEZONE_OFFSET_SEC;
+        struct tm* timeinfo = gmtime(&localTime);
+        if (timeinfo) {
+            int curSecOfDay = timeinfo->tm_hour * 3600 + timeinfo->tm_min * 60 + timeinfo->tm_sec;
+
+            // Dawn window
+            int dawnTargetMin = m_schedule->dawnHour * 60 + m_schedule->dawnMinute;
+            int dawnDurSec = (m_schedule->dawnDurationMin > 0 ? m_schedule->dawnDurationMin : 10) * 60;
+            int dawnTargetSec = dawnTargetMin * 60;
+            int dawnStartSec = (dawnTargetSec >= dawnDurSec) ? (dawnTargetSec - dawnDurSec) : (86400 + dawnTargetSec - dawnDurSec);
+
+            bool inDawn = false;
+            float dawnProgress = 0.0f;
+            if (dawnStartSec <= dawnTargetSec) {
+                if (curSecOfDay >= dawnStartSec && curSecOfDay <= dawnTargetSec) {
+                    inDawn = true;
+                    dawnProgress = static_cast<float>(curSecOfDay - dawnStartSec) / static_cast<float>(dawnDurSec);
+                }
+            } else {
+                if (curSecOfDay >= dawnStartSec || curSecOfDay <= dawnTargetSec) {
+                    inDawn = true;
+                    int elapsed = (curSecOfDay >= dawnStartSec) ? (curSecOfDay - dawnStartSec) : (86400 - dawnStartSec + curSecOfDay);
+                    dawnProgress = static_cast<float>(elapsed) / static_cast<float>(dawnDurSec);
+                }
+            }
+
+            // Dusk window
+            int duskStartMin = m_schedule->duskHour * 60 + m_schedule->duskMinute;
+            int duskDurSec = (m_schedule->duskDurationMin > 0 ? m_schedule->duskDurationMin : 30) * 60;
+            int duskStartSec = duskStartMin * 60;
+            int duskEndSec = (duskStartSec + duskDurSec) % 86400;
+
+            bool inDusk = false;
+            float duskProgress = 0.0f;
+            if (duskStartSec <= (duskStartSec + duskDurSec) && (duskStartSec + duskDurSec) < 86400) {
+                if (curSecOfDay >= duskStartSec && curSecOfDay <= duskStartSec + duskDurSec) {
+                    inDusk = true;
+                    duskProgress = static_cast<float>(curSecOfDay - duskStartSec) / static_cast<float>(duskDurSec);
+                }
+            } else {
+                if (curSecOfDay >= duskStartSec || curSecOfDay <= duskEndSec) {
+                    inDusk = true;
+                    int elapsed = (curSecOfDay >= duskStartSec) ? (curSecOfDay - duskStartSec) : (86400 - duskStartSec + curSecOfDay);
+                    duskProgress = static_cast<float>(elapsed) / static_cast<float>(duskDurSec);
+                }
+            }
+
+            if (inDawn) {
+                // Dawn sunrise: smooth brightness rise from dark amber to warm sun
+                dawnProgress = constrain(dawnProgress, 0.0f, 1.0f);
+                for (int y = 0; y < MATRIX_HEIGHT; y++) {
+                    float relY = static_cast<float>(y) / static_cast<float>(MATRIX_HEIGHT - 1);
+                    float horizonDist = fabsf(relY - dawnProgress * 0.85f);
+                    uint8_t warmIntensity = static_cast<uint8_t>(fmaxf(0.0f, (1.0f - horizonDist * 1.6f) * 255.0f));
+
+                    CRGB horizonColor = blend(CRGB(50, 8, 2), CRGB(255, 175, 45), static_cast<uint8_t>(dawnProgress * 255.0f));
+                    CRGB upperColor = blend(CRGB(2, 4, 18), CRGB(100, 160, 240), static_cast<uint8_t>(dawnProgress * 255.0f));
+                    CRGB col = blend(upperColor, horizonColor, warmIntensity);
+
+                    // Fade in overall brightness from dark amber to full
+                    uint8_t masterScale = static_cast<uint8_t>(25 + dawnProgress * 230.0f);
+                    col.nscale8_video(masterScale);
+
+                    for (int x = 0; x < MATRIX_WIDTH; x++) {
+                        matrix.setPixel(x, y, col);
+                    }
+                }
+                return;
+            } else if (inDusk) {
+                // Dusk: soft amber light 2000K with smooth fade out until off at end
+                duskProgress = constrain(duskProgress, 0.0f, 1.0f);
+                float duskBriFactor = 1.0f - duskProgress; // 1.0 down to 0.0
+                uint8_t briScale = static_cast<uint8_t>(duskBriFactor * 255.0f);
+
+                for (int y = 0; y < MATRIX_HEIGHT; y++) {
+                    float relY = static_cast<float>(y) / static_cast<float>(MATRIX_HEIGHT - 1);
+                    float rowFactor = 0.5f + 0.5f * (1.0f - relY * 0.7f);
+                    CRGB duskColor(
+                        static_cast<uint8_t>(255 * rowFactor),
+                        static_cast<uint8_t>(110 * rowFactor),
+                        static_cast<uint8_t>(20 * rowFactor)
+                    );
+                    duskColor.nscale8_video(briScale);
+
+                    for (int x = 0; x < MATRIX_WIDTH; x++) {
+                        matrix.setPixel(x, y, duskColor);
+                    }
+                }
+                return;
+            }
+        }
+    }
+
+    // 2. Manual / Outside schedule mode: diurnal sky gradient
+    float cyclePhase = 0.0f; // 0.0 .. 1.0 (0=Midnight, 0.25=Dawn, 0.5=Noon, 0.75=Dusk)
+    if (validTime) {
         time_t localTime = rawtime + TIMEZONE_OFFSET_SEC;
         struct tm* timeinfo = gmtime(&localTime);
         if (timeinfo) {
@@ -60,7 +160,6 @@ void EffectDawnDusk::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI
             cyclePhase = static_cast<float>(secOfDay) / 86400.0f;
         }
     } else {
-        // Standalone demonstration: smooth 60-second full diurnal cycle
         constexpr uint32_t demoCycleDurationMs = 60000;
         cyclePhase = static_cast<float>((now - m_cycleStartTime) % demoCycleDurationMs) / static_cast<float>(demoCycleDurationMs);
     }
@@ -69,17 +168,15 @@ void EffectDawnDusk::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI
     float sunAltitude = -cosf(cyclePhase * 6.2831853f);
 
     for (int y = 0; y < MATRIX_HEIGHT; y++) {
-        float relY = static_cast<float>(y) / static_cast<float>(MATRIX_HEIGHT - 1); // 0.0 at bottom, 1.0 at top
+        float relY = static_cast<float>(y) / static_cast<float>(MATRIX_HEIGHT - 1);
         CRGB skyColor;
 
         if (sunAltitude < -0.15f) {
-            // Night sky: deep navy with soft bottom horizon glow
             float nightDarkness = fminf(1.0f, (-sunAltitude - 0.15f) / 0.85f);
             uint8_t blueVal = static_cast<uint8_t>(fmaxf(10.0f, 40.0f * (1.0f - relY * 0.7f) * nightDarkness));
             skyColor = CRGB(2, 4, blueVal);
         } else if (sunAltitude >= -0.15f && sunAltitude < 0.25f) {
-            // Dawn / Sunrise: starts from bottom Y=0 (deep crimson/orange) expanding to gold/sky blue
-            float dawnProgress = (sunAltitude + 0.15f) / 0.40f; // 0..1
+            float dawnProgress = (sunAltitude + 0.15f) / 0.40f;
             float horizonDist = fabsf(relY - dawnProgress * 0.8f);
             uint8_t warmIntensity = static_cast<uint8_t>(fmaxf(0.0f, (1.0f - horizonDist * 1.5f) * 255.0f));
 
@@ -88,8 +185,7 @@ void EffectDawnDusk::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI
 
             skyColor = blend(upperSky, horizonWarm, warmIntensity);
         } else {
-            // Daytime / Zenith: bright golden warmth at top, clear sky
-            float dayProgress = (sunAltitude - 0.25f) / 0.75f; // 0..1
+            float dayProgress = (sunAltitude - 0.25f) / 0.75f;
             CRGB sunZenith = CRGB(255, 230, 160);
             CRGB blueAtmosphere = CRGB(100, 170, 255);
             skyColor = blend(blueAtmosphere, sunZenith, static_cast<uint8_t>(relY * dayProgress * 255.0f));
@@ -295,13 +391,25 @@ void EffectPerlinNoise::init(LedMatrix& matrix) {
         m_xCoords[x] = static_cast<uint16_t>((cosf(angle) + 1.0f) * 1200.0f);
         m_yCoords[x] = static_cast<uint16_t>((sinf(angle) + 1.0f) * 1200.0f);
     }
+    m_zAccum = 0.0f;
+    m_colorAccum = 0.0f;
+    m_lastPerlinTime = millis();
     matrix.clear(false);
 }
 
 void EffectPerlinNoise::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
     uint32_t now = millis();
-    uint32_t zTime = now / 15;
-    uint8_t colorShift = static_cast<uint8_t>(now / 35);
+    float dt = (now - m_lastPerlinTime) / 1000.0f;
+    if (dt <= 0.0f || dt > 0.1f) dt = 0.016f;
+    m_lastPerlinTime = now;
+
+    // Scale z/t shift proportionally to speed (1..255, default 128)
+    float speedMult = static_cast<float>(m_speed) / 128.0f;
+    m_zAccum += dt * 66.0f * speedMult;
+    m_colorAccum += dt * 28.0f * speedMult;
+
+    uint32_t zTime = static_cast<uint32_t>(m_zAccum);
+    uint8_t colorShift = static_cast<uint8_t>(m_colorAccum);
 
     for (int x = 0; x < MATRIX_WIDTH; x++) {
         uint16_t nx = m_xCoords[x];

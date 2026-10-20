@@ -203,41 +203,30 @@ void MicI2S::processSamples(const int32_t* samples, size_t count) {
     float sensFactor = static_cast<float>(m_sensitivity) / 128.0f;
 
     if (m_agcEnabled) {
-        // 1. Noise floor tracking: adapts down quickly, adapts up very slowly
-        if (m_rawRms < m_noiseFloor) {
-            m_noiseFloor += (m_rawRms - m_noiseFloor) * 0.05f;
-        } else {
-            m_noiseFloor += (m_rawRms - m_noiseFloor) * 0.001f;
-        }
-        // Clamp noise floor to sensible minimum/maximum
-        if (m_noiseFloor < 0.0001f) m_noiseFloor = 0.0001f;
-        if (m_noiseFloor > 0.05f)   m_noiseFloor = 0.05f;
-
-        // Noise gate silence threshold based on adaptive noise floor
-        float noiseGate = m_noiseFloor * 1.35f + 0.0004f;
+        // Fixed low Noise Gate: only cuts off digital I2S background floor in quiet room
+        constexpr float noiseGate = 0.00035f;
 
         if (m_rawRms <= noiseGate) {
             // Silence detected: drop target level to zero
             targetLevel = 0.0f;
         } else {
-            // 2. Dynamic peak ceiling tracking (AGC): snaps up on loud sounds, decays slowly
+            // Fast attack and fast symmetrical relaxation (recovers within 100-200 ms after loud claps)
             if (m_rawRms > m_agcMax) {
-                m_agcMax += (m_rawRms - m_agcMax) * 0.4f;
+                m_agcMax += (m_rawRms - m_agcMax) * 0.45f;
             } else {
-                // Decay slowly toward nominal ceiling (~0.015f)
-                m_agcMax += (0.015f - m_agcMax) * 0.0008f;
+                m_agcMax += (0.015f - m_agcMax) * 0.08f; // fast recovery ~150 ms
             }
             if (m_agcMax < 0.01f) m_agcMax = 0.01f;
             if (m_agcMax > 1.0f)  m_agcMax = 1.0f;
 
-            // 3. Normalized level scaled within dynamic range [noiseGate .. agcMax] with sensitivity
+            // Normalized level scaled within dynamic range [noiseGate .. agcMax] with sensitivity
             float dynamicRange = m_agcMax - noiseGate;
             if (dynamicRange < 0.005f) dynamicRange = 0.005f;
 
             targetLevel = ((m_rawRms - noiseGate) / dynamicRange) * sensFactor;
         }
     } else {
-        // Fixed scale without AGC (useful for calibrated metering)
+        // Fixed scale without AGC
         targetLevel = m_rawRms * 10.0f * sensFactor;
     }
 
@@ -315,9 +304,9 @@ void MicI2S::computeSpectrum(const float* acSamples, size_t count) {
     static const uint8_t bandEnd[NUM_SPECTRUM_BANDS]   = { 1, 2, 3, 4, 5, 6, 7, 9, 11, 14, 18, 23, 30, 39, 50, 63 };
 
     float sensFactor = static_cast<float>(m_sensitivity) / 128.0f;
-    float noiseGate = m_noiseFloor * 1.35f + 0.0004f;
+    constexpr float noiseGate = 0.00035f;
     bool isSilent = (m_rawRms <= noiseGate);
-    float agcGain = (0.025f / fmaxf(0.005f, m_agcMax)) * sensFactor * m_gain * 6.0f;
+    float agcGain = (0.038f / fmaxf(0.004f, m_agcMax)) * sensFactor * m_gain * 8.5f;
 
     for (uint8_t b = 0; b < NUM_SPECTRUM_BANDS; b++) {
         float normBand = 0.0f;
@@ -331,13 +320,17 @@ void MicI2S::computeSpectrum(const float* acSamples, size_t count) {
             float avgMag = sumMag / nBins;
 
             // Equalization curve weighting for high frequency compensation
-            float eqWeight = 1.0f + b * 0.15f;
+            float eqWeight = 1.0f + b * 0.18f;
             normBand = avgMag * eqWeight * agcGain;
             if (normBand > 1.0f) normBand = 1.0f;
         }
 
-        // Smooth band ballistics
-        m_smoothBands[b] = m_smoothBands[b] * 0.65f + normBand * 0.35f;
+        // Snappy band ballistics: instant attack, lively falloff
+        if (normBand > m_smoothBands[b]) {
+            m_smoothBands[b] = m_smoothBands[b] * 0.25f + normBand * 0.75f;
+        } else {
+            m_smoothBands[b] = m_smoothBands[b] * 0.72f + normBand * 0.28f;
+        }
     }
 
     // Musical bass beat detection in low bands (sub-bass / bass: bands 0..2)

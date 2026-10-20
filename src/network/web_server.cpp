@@ -255,12 +255,26 @@ void LampWebServer::handleStatus() {
     }
     effectsArray += "]";
 
+    String formattedTime = m_wifi ? m_wifi->getFormattedTime() : "--:--";
+    ScheduleConfig sch = m_effectMgr ? m_effectMgr->getSchedule() : ScheduleConfig();
+    char dawnBuf[8], duskBuf[8];
+    snprintf(dawnBuf, sizeof(dawnBuf), "%02d:%02d", sch.dawnHour, sch.dawnMinute);
+    snprintf(duskBuf, sizeof(duskBuf), "%02d:%02d", sch.duskHour, sch.duskMinute);
+
     String jsonStr = "{\"power\":" + String(power ? "true" : "false") +
                      ",\"brightness\":" + String(brightness) +
                      ",\"effect\":" + String(effect) +
                      ",\"effectName\":\"" + String(effectName) + "\"" +
                      ",\"speed\":" + String(speed) +
                      ",\"micSensitivity\":" + String(micSens) +
+                     ",\"time\":\"" + formattedTime + "\"" +
+                     ",\"scheduleEnabled\":" + String(sch.enabled ? "true" : "false") +
+                     ",\"dawnTime\":\"" + String(dawnBuf) + "\"" +
+                     ",\"duskTime\":\"" + String(duskBuf) + "\"" +
+                     ",\"dawnHour\":" + String(sch.dawnHour) +
+                     ",\"dawnMinute\":" + String(sch.dawnMinute) +
+                     ",\"duskHour\":" + String(sch.duskHour) +
+                     ",\"duskMinute\":" + String(sch.duskMinute) +
                      ",\"cpuTemp\":" + String(cpuTemp, 1) +
                      ",\"rssi\":" + String(rssi) +
                      ",\"ip\":\"" + ip + "\"" +
@@ -316,11 +330,63 @@ void LampWebServer::handleControl() {
     }
 
     int micSensVal = 0;
-    if (getIntParam(m_server, body, "micSensitivity", micSensVal)) {
+    if (getIntParam(m_server, body, "micSensitivity", micSensVal) || getIntParam(m_server, body, "sensitivity", micSensVal)) {
         if (micSensVal < 1) micSensVal = 1;
         if (micSensVal > 255) micSensVal = 255;
         if (m_effectMgr) m_effectMgr->setMicSensitivity(micSensVal);
         if (m_mic) m_mic->setSensitivity(micSensVal);
+    }
+
+    // Schedule parameters
+    if (m_effectMgr) {
+        ScheduleConfig sch = m_effectMgr->getSchedule();
+        bool scheduleChanged = false;
+
+        bool schEn = false;
+        if (getBoolParam(m_server, body, "scheduleEnabled", schEn)) {
+            sch.enabled = schEn;
+            scheduleChanged = true;
+        }
+
+        int dh = 0, dm = 0, sh = 0, sm = 0;
+        if (getIntParam(m_server, body, "dawnHour", dh)) {
+            sch.dawnHour = constrain(dh, 0, 23);
+            scheduleChanged = true;
+        }
+        if (getIntParam(m_server, body, "dawnMinute", dm)) {
+            sch.dawnMinute = constrain(dm, 0, 59);
+            scheduleChanged = true;
+        }
+        if (getIntParam(m_server, body, "duskHour", sh)) {
+            sch.duskHour = constrain(sh, 0, 23);
+            scheduleChanged = true;
+        }
+        if (getIntParam(m_server, body, "duskMinute", sm)) {
+            sch.duskMinute = constrain(sm, 0, 59);
+            scheduleChanged = true;
+        }
+
+        String dawnStr = "", duskStr = "";
+        if (getStringParam(m_server, body, "dawnTime", dawnStr)) {
+            int h = 0, m = 0;
+            if (sscanf(dawnStr.c_str(), "%d:%d", &h, &m) >= 2) {
+                sch.dawnHour = constrain(h, 0, 23);
+                sch.dawnMinute = constrain(m, 0, 59);
+                scheduleChanged = true;
+            }
+        }
+        if (getStringParam(m_server, body, "duskTime", duskStr)) {
+            int h = 0, m = 0;
+            if (sscanf(duskStr.c_str(), "%d:%d", &h, &m) >= 2) {
+                sch.duskHour = constrain(h, 0, 23);
+                sch.duskMinute = constrain(m, 0, 59);
+                scheduleChanged = true;
+            }
+        }
+
+        if (scheduleChanged) {
+            m_effectMgr->setSchedule(sch);
+        }
     }
 
     m_server.send(200, "application/json", "{\"status\":\"ok\"}");

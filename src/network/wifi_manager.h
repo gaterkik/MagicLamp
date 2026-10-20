@@ -36,6 +36,10 @@ public:
     void saveCredentials(const String& ssid, const String& pass);
     void resetCredentials();
 
+    bool getLocalTime(struct tm *info) const;
+    String getFormattedTime() const;
+    bool isTimeSynced() const;
+
     WifiState getState() const { return _state; }
 
 private:

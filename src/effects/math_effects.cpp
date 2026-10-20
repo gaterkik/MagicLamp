@@ -247,8 +247,9 @@ void EffectGameOfLife::update(LedMatrix& matrix, const ImuMpu6050& imu, const Mi
         m_stagnantSince = 0;
     }
 
-    // Step evolution every 135 ms
-    if (now - m_lastStepTime >= 135) {
+    // Step evolution interval scaled by speed (400 ms at speed 1 to 40 ms at speed 255)
+    uint32_t delayMs = 400 - static_cast<uint32_t>(m_speed - 1) * (400 - 40) / 254;
+    if (now - m_lastStepTime >= delayMs) {
         m_lastStepTime = now;
         step(now);
     }
@@ -286,13 +287,15 @@ void EffectLorenzAttractor::update(LedMatrix& matrix, const ImuMpu6050& imu, con
     // Gentle persistence trail
     matrix.fadeToBlackBy(36);
 
-    // Chaotic differential equation integration (Runge-Kutta / Euler substeps)
-    constexpr float dt = 0.0065f;
+    // Chaotic differential equation integration scaled by speed
+    float speedMult = static_cast<float>(m_speed) / 128.0f;
+    float dt = 0.005f * speedMult;
+    int substeps = constrain(static_cast<int>(6 * speedMult), 2, 12);
     constexpr float sigma = 10.0f;
     constexpr float rho = 28.0f;
     constexpr float beta = 8.0f / 3.0f;
 
-    for (int substep = 0; substep < 8; substep++) {
+    for (int substep = 0; substep < substeps; substep++) {
         float dx = sigma * (m_y - m_x) * dt;
         float dy = (m_x * (rho - m_z) - m_y) * dt;
         float dz = (m_x * m_y - beta * m_z) * dt;
@@ -331,10 +334,12 @@ void EffectMetaballs::init(LedMatrix& matrix) {
 }
 
 void EffectMetaballs::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
-    // Move metaball centers
+    float speedMult = static_cast<float>(m_speed) / 128.0f;
+
+    // Move metaball centers scaled by speed
     for (int i = 0; i < NUM_BALLS; i++) {
-        m_bx[i] += m_vx[i];
-        m_by[i] += m_vy[i];
+        m_bx[i] += m_vx[i] * speedMult;
+        m_by[i] += m_vy[i] * speedMult;
 
         // Seamless wrap X around cylinder
         if (m_bx[i] < 0.0f) m_bx[i] += static_cast<float>(MATRIX_WIDTH);
@@ -351,7 +356,7 @@ void EffectMetaballs::update(LedMatrix& matrix, const ImuMpu6050& imu, const Mic
     }
 
     uint32_t now = millis();
-    m_colorOffset = static_cast<uint8_t>(now / 35);
+    m_colorOffset = static_cast<uint8_t>((now * speedMult) / 35.0f);
 
     for (int y = 0; y < MATRIX_HEIGHT; y++) {
         for (int x = 0; x < MATRIX_WIDTH; x++) {
