@@ -78,6 +78,55 @@ String StoreManager::getDefaultEffectUrl(const String& effectId) const {
     return String("https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/effects/") + effectId + ".eff";
 }
 
+bool StoreManager::downloadFile(const String& url, String& outContent) {
+    int code = 0;
+    for (uint8_t attempt = 1; attempt <= 3; attempt++) {
+        WiFiClientSecure client;
+        client.setInsecure();
+        client.setTimeout(15000);
+        client.setHandshakeTimeout(15);
+
+        HTTPClient http;
+        http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+        http.setTimeout(15000);
+        http.setUserAgent("MagicLamp-Store/0.5.1");
+
+        Serial.printf("[Store] Downloading (attempt %u/3): %s\n", attempt, url.c_str());
+        if (!http.begin(client, url)) {
+            Serial.printf("[Store] http.begin failed on attempt %u/3\n", attempt);
+            if (attempt < 3) {
+                delay(1500);
+                continue;
+            }
+            return false;
+        }
+
+        code = http.GET();
+        if (code < 0) {
+            Serial.printf("[Store] Connection error %d on attempt %u/3: %s\n",
+                          code, attempt, http.errorToString(code).c_str());
+            http.end();
+            client.stop();
+            if (attempt < 3) {
+                delay(1500);
+                continue;
+            }
+        } else {
+            if (code == HTTP_CODE_OK) {
+                outContent = http.getString();
+                http.end();
+                client.stop();
+                return true;
+            }
+            Serial.printf("[Store] HTTP response status code %d for %s\n", code, url.c_str());
+            http.end();
+            client.stop();
+            break;
+        }
+    }
+    return false;
+}
+
 bool StoreManager::installEffect(const String& effectId, const String& url, EffectManager* effectMgr, String& outMessage) {
     if (!m_mounted) {
         outMessage = "LittleFS is not mounted";
@@ -92,30 +141,12 @@ bool StoreManager::installEffect(const String& effectId, const String& url, Effe
     String downloadUrl = url.isEmpty() ? getDefaultEffectUrl(effectId) : url;
     Serial.printf("[Store] Downloading effect '%s' from: %s\n", effectId.c_str(), downloadUrl.c_str());
 
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    HTTPClient http;
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setTimeout(12000);
-    http.setUserAgent("MagicLamp-Store/0.5.0");
-
-    if (!http.begin(client, downloadUrl)) {
-        outMessage = "Failed to initiate HTTPS connection";
-        Serial.println(F("[Store] ERROR: http.begin failed"));
+    String payload;
+    if (!downloadFile(downloadUrl, payload)) {
+        outMessage = "Download failed (network error, timeout or HTTP error)";
+        Serial.printf("[Store] ERROR: Failed to download %s\n", downloadUrl.c_str());
         return false;
     }
-
-    int httpCode = http.GET();
-    if (httpCode != HTTP_CODE_OK) {
-        outMessage = String("HTTP error: ") + String(httpCode);
-        Serial.printf("[Store] Download failed with HTTP code: %d\n", httpCode);
-        http.end();
-        return false;
-    }
-
-    String payload = http.getString();
-    http.end();
 
     if (payload.length() < 10) {
         outMessage = "Downloaded file payload is too small or empty";
@@ -145,16 +176,6 @@ bool StoreManager::installEffect(const String& effectId, const String& url, Effe
     // Rescan and update EffectManager
     if (effectMgr) {
         scanAndLoadEffects(*effectMgr);
-
-        // Find the newly installed effect and immediately activate it
-        for (uint8_t i = 10; i < effectMgr->getTotalEffects(); i++) {
-            Effect* eff = effectMgr->getEffect(i);
-            if (eff && strcmp(eff->getName(), tempVM.getName()) == 0) {
-                extern LedMatrix* g_activeMatrixForStore; // fallback or pass matrix
-                // Will be activated in web handler with matrix reference
-                break;
-            }
-        }
     }
 
     outMessage = "Effect installed successfully";
@@ -189,28 +210,7 @@ bool StoreManager::isEffectInstalled(const String& effectId) const {
 bool StoreManager::fetchCatalogJson(String& outJson) {
     String catalogUrl = "https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/manifest.json";
     Serial.printf("[Store] Fetching catalog from %s\n", catalogUrl.c_str());
-
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    HTTPClient http;
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setTimeout(10000);
-    http.setUserAgent("MagicLamp-Store/0.5.0");
-
-    if (!http.begin(client, catalogUrl)) {
-        return false;
-    }
-
-    int code = http.GET();
-    if (code == HTTP_CODE_OK) {
-        outJson = http.getString();
-        http.end();
-        return true;
-    }
-
-    http.end();
-    return false;
+    return downloadFile(catalogUrl, outJson);
 }
 
 String StoreManager::getInstalledJson() const {

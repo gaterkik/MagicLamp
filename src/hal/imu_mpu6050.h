@@ -125,8 +125,11 @@ public:
 
     /**
      * @brief Get detailed diagnostic status string:
-     * "Online (SDA:..., SCL:..., addr:0x..., who:0x...)" or "Not Found on GPIO 5/6".
+     * "Online (SDA:..., SCL:..., addr:0x..., who:0x...)",
+     * "No pull-up / Check 3.3V on GY-521 (SDA:LOW, SCL:HIGH)", or
+     * "Not Found (SDA/SCL HIGH, no ACK on GPIO 4,5,6,8,9)".
      */
+    const char* getStatus() const { return m_statusStr; }
     const char* getStatusString() const { return m_statusStr; }
 
     /**
@@ -150,7 +153,7 @@ private:
     uint32_t m_lastAutoScanTime;
     uint32_t m_lastShakeTime;
     bool m_shaken;
-    char m_statusStr[64];
+    char m_statusStr[96];
 
     float m_gx;
     float m_gy;
@@ -160,6 +163,8 @@ private:
     float m_rawAy;
     float m_rawAz;
 
+    bool checkElectricalLevels(uint8_t sda, uint8_t scl, int& sdaLevel, int& sclLevel);
+    bool scanPins();
     bool tryInitOnPins(uint8_t sda, uint8_t scl);
     bool readRawData(int16_t& ax, int16_t& ay, int16_t& az);
     void updateFallback(uint32_t now);

@@ -33,30 +33,92 @@ ImuMpu6050::ImuMpu6050(uint8_t sdaPin,
       m_rawAx(0.0f),
       m_rawAy(-1.0f),
       m_rawAz(0.0f) {
-    strncpy(m_statusStr, "Not Found on GPIO 5/6", sizeof(m_statusStr));
+    strncpy(m_statusStr, "Initializing...", sizeof(m_statusStr));
 }
 
-bool ImuMpu6050::begin() {
-    Serial.printf("[IMU] Probing GY-521 on primary pair SDA=%d, SCL=%d (100kHz, pullup)...\n",
-                  m_sdaPin, m_sclPin);
+bool ImuMpu6050::checkElectricalLevels(uint8_t sda, uint8_t scl, int& sdaLevel, int& sclLevel) {
+    Wire.end();
+    pinMode(sda, INPUT);
+    pinMode(scl, INPUT);
+    delayMicroseconds(50);
+    sdaLevel = digitalRead(sda);
+    sclLevel = digitalRead(scl);
+    return (sdaLevel == HIGH && sclLevel == HIGH);
+}
+
+bool ImuMpu6050::scanPins() {
+    // 1. Electrical diagnostic on primary pins (SDA=6, SCL=5)
+    int sdaLvl = 0, sclLvl = 0;
+    bool pullupOk = checkElectricalLevels(m_sdaPin, m_sclPin, sdaLvl, sclLvl);
+
+    Serial.printf("[IMU] Electrical check on primary pins SDA=%d (%s), SCL=%d (%s)\n",
+                  m_sdaPin, sdaLvl == HIGH ? "HIGH" : "LOW",
+                  m_sclPin, sclLvl == HIGH ? "HIGH" : "LOW");
+
+    if (!pullupOk) {
+        snprintf(m_statusStr, sizeof(m_statusStr),
+                 "No pull-up / Check 3.3V on GY-521 (SDA:%s, SCL:%s)",
+                 sdaLvl == HIGH ? "HIGH" : "LOW",
+                 sclLvl == HIGH ? "HIGH" : "LOW");
+        Serial.printf("[IMU] DIAGNOSTIC: %s\n", m_statusStr);
+        m_fallback = true;
+        updateFallback(millis());
+        return false;
+    }
+
+    // 2. Levels are HIGH: Probe standard pair (SDA=6, SCL=5)
+    Serial.printf("[IMU] Probing standard pair SDA=%d, SCL=%d (100kHz)...\n", m_sdaPin, m_sclPin);
     if (tryInitOnPins(m_sdaPin, m_sclPin)) {
         return true;
     }
 
+    // 3. Probe mirror pair (SDA=5, SCL=6)
     uint8_t mirrorSda = m_sclPin;
     uint8_t mirrorScl = m_sdaPin;
-    Serial.printf("[IMU] Not detected on primary pair. Probing mirror pair SDA=%d, SCL=%d...\n",
+    Serial.printf("[IMU] Not detected on standard pair. Probing mirror pair SDA=%d, SCL=%d...\n",
                   mirrorSda, mirrorScl);
     if (tryInitOnPins(mirrorSda, mirrorScl)) {
         return true;
     }
 
-    Serial.println(F("[IMU] WARNING: Not Found on GPIO 5/6. Activating Graceful Fallback mode."));
+    // 4. Auto-search across free GPIOs: 4, 5, 6, 8, 9
+    Serial.println(F("[IMU] Sensor not responding on 6/5. Scanning GPIO 4, 5, 6, 8, 9..."));
+    const uint8_t candidatePins[] = {4, 5, 6, 8, 9};
+    const size_t numPins = sizeof(candidatePins) / sizeof(candidatePins[0]);
+
+    for (size_t i = 0; i < numPins; i++) {
+        for (size_t j = 0; j < numPins; j++) {
+            if (i == j) continue;
+            uint8_t sda = candidatePins[i];
+            uint8_t scl = candidatePins[j];
+
+            // Already checked primary and mirror
+            if ((sda == m_sdaPin && scl == m_sclPin) ||
+                (sda == mirrorSda && scl == mirrorScl)) {
+                continue;
+            }
+
+            int pSdaLvl = 0, pSclLvl = 0;
+            if (checkElectricalLevels(sda, scl, pSdaLvl, pSclLvl)) {
+                if (tryInitOnPins(sda, scl)) {
+                    Serial.printf("[IMU] Sensor discovered on candidate pins: %s\n", m_statusStr);
+                    return true;
+                }
+            }
+        }
+    }
+
+    // 5. Not found on any combination of candidate pins
+    snprintf(m_statusStr, sizeof(m_statusStr), "Not Found (SDA/SCL HIGH, no ACK on GPIO 4,5,6,8,9)");
+    Serial.printf("[IMU] WARNING: %s. Activating Graceful Fallback mode.\n", m_statusStr);
     m_fallback = true;
-    strncpy(m_statusStr, "Not Found on GPIO 5/6", sizeof(m_statusStr));
-    m_lastAutoScanTime = millis();
     updateFallback(millis());
     return false;
+}
+
+bool ImuMpu6050::begin() {
+    m_lastAutoScanTime = millis();
+    return scanPins();
 }
 
 bool ImuMpu6050::tryInitOnPins(uint8_t sda, uint8_t scl) {
@@ -215,7 +277,7 @@ void ImuMpu6050::update() {
         // Periodic background auto-scan every 5 seconds if sensor is offline
         if (now - m_lastAutoScanTime >= 5000) {
             m_lastAutoScanTime = now;
-            if (tryInitOnPins(m_sdaPin, m_sclPin) || tryInitOnPins(m_sclPin, m_sdaPin)) {
+            if (scanPins()) {
                 Serial.printf("[IMU] Sensor recovered during background scan: %s\n", m_statusStr);
             }
         }
@@ -228,9 +290,9 @@ void ImuMpu6050::update() {
         if (m_consecutiveErrors >= 5) {
             Serial.println(F("[IMU] WARNING: Too many I2C read errors. Switching to Graceful Fallback mode."));
             m_fallback = true;
-            strncpy(m_statusStr, "Not Found on GPIO 5/6", sizeof(m_statusStr));
-            m_lastAutoScanTime = now;
             Wire.end();
+            scanPins();
+            m_lastAutoScanTime = now;
             updateFallback(now);
         }
         return;

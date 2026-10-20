@@ -69,7 +69,13 @@ void WiFiManager::update() {
         case WifiState::STA_CONNECTING: {
             if (WiFi.status() == WL_CONNECTED) {
                 _state = WifiState::STA_CONNECTED;
-                Serial.printf("[WiFi] Connected successfully! IP: %s, RSSI: %d dBm\n",
+
+                // Disable Wi-Fi modem sleep on ESP32-C6 to prevent socket drops and TLS failures
+                WiFi.setSleep(false);
+                // Disable SoftAP mode now that STA connection is active
+                WiFi.enableAP(false);
+
+                Serial.printf("[WiFi] Connected successfully! IP: %s, RSSI: %d dBm (Radio Sleep: OFF, AP: OFF)\n",
                               WiFi.localIP().toString().c_str(), WiFi.RSSI());
 
                 // Start mDNS

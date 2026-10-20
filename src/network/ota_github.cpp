@@ -166,47 +166,85 @@ void OtaGithub::runTask() {
     Serial.println(F("[OTA] Checking GitHub releases..."));
     setStatus("Connecting to GitHub...");
 
-    WiFiClientSecure client;
-    client.setInsecure(); // Bypass CA certificate check for resilient updates
+    int httpCode = 0;
+    String payload;
+    bool requestSuccess = false;
 
-    HTTPClient http;
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setTimeout(15000);
+    for (uint8_t attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+        WiFiClientSecure client;
+        client.setInsecure(); // Bypass CA certificate check for resilient updates
+        client.setTimeout(HTTP_TIMEOUT_MS);
+        client.setHandshakeTimeout(15);
 
-    if (!http.begin(client, GITHUB_API_URL)) {
-        setStatus("HTTP begin failed");
-        Serial.println(F("[OTA] Failed to initialize HTTP client for API URL."));
-        _isChecking = false;
-        _isTaskRunning = false;
-        _taskHandle = nullptr;
-        vTaskDelete(NULL);
-        return;
+        HTTPClient http;
+        http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+        http.setTimeout(HTTP_TIMEOUT_MS);
+
+        Serial.printf("[OTA] GitHub API request (attempt %u/%u)...\n", attempt, MAX_RETRY_ATTEMPTS);
+        if (!http.begin(client, GITHUB_API_URL)) {
+            Serial.printf("[OTA] Failed to initialize HTTP client for API URL (attempt %u/%u).\n",
+                          attempt, MAX_RETRY_ATTEMPTS);
+            if (attempt < MAX_RETRY_ATTEMPTS) {
+                vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+                continue;
+            }
+            setStatus("HTTP begin failed");
+            _isChecking = false;
+            _isTaskRunning = false;
+            _taskHandle = nullptr;
+            vTaskDelete(NULL);
+            return;
+        }
+
+        http.addHeader("User-Agent", USER_AGENT);
+        http.addHeader("Accept", "application/vnd.github.v3+json");
+
+        httpCode = http.GET();
+        if (httpCode < 0) {
+            Serial.printf("[OTA] GitHub API connection error %d on attempt %u/%u: %s\n",
+                          httpCode, attempt, MAX_RETRY_ATTEMPTS, http.errorToString(httpCode).c_str());
+            http.end();
+            client.stop();
+            if (attempt < MAX_RETRY_ATTEMPTS) {
+                char retryBuf[64];
+                snprintf(retryBuf, sizeof(retryBuf), "Retry API (%u/%u)...", attempt + 1, MAX_RETRY_ATTEMPTS);
+                setStatus(retryBuf);
+                vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+                continue;
+            }
+        } else {
+            if (httpCode == HTTP_CODE_OK) {
+                payload = http.getString();
+                requestSuccess = true;
+            }
+            http.end();
+            client.stop();
+            break;
+        }
     }
 
-    http.addHeader("User-Agent", USER_AGENT);
-    http.addHeader("Accept", "application/vnd.github.v3+json");
-
-    int httpCode = http.GET();
-    if (httpCode != HTTP_CODE_OK) {
+    if (!requestSuccess) {
         if (httpCode == HTTP_CODE_NOT_FOUND) {
             setStatus("Релизов на GitHub пока нет (HTTP 404)");
             Serial.println(F("[OTA] GitHub API returned HTTP 404: Релизов на GitHub пока нет."));
+        } else if (httpCode < 0) {
+            char errBuf[96];
+            snprintf(errBuf, sizeof(errBuf), "API conn error %d", httpCode);
+            setStatus(errBuf);
+            Serial.printf("[OTA] GitHub API connection failed after %u attempts, error: %d\n",
+                          MAX_RETRY_ATTEMPTS, httpCode);
         } else {
             char errBuf[96];
             snprintf(errBuf, sizeof(errBuf), "API HTTP error %d", httpCode);
             setStatus(errBuf);
             Serial.printf("[OTA] GitHub API request failed, HTTP code: %d\n", httpCode);
         }
-        http.end();
         _isChecking = false;
         _isTaskRunning = false;
         _taskHandle = nullptr;
         vTaskDelete(NULL);
         return;
     }
-
-    String payload = http.getString();
-    http.end();
 
     String remoteTag;
     String downloadUrl;
@@ -256,40 +294,139 @@ void OtaGithub::runTask() {
 }
 
 void OtaGithub::performUpdate(const String& downloadUrl) {
-    Serial.printf("[OTA] Downloading binary from %s\n", downloadUrl.c_str());
+    Serial.printf("[OTA] Step 1: Resolving binary redirect from %s\n", downloadUrl.c_str());
+    setStatus("Resolving redirect...");
 
-    WiFiClientSecure client;
-    client.setInsecure();
+    String targetUrl = downloadUrl;
+    const char* headerKeys[] = {"Location"};
 
-    HTTPClient http;
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setTimeout(30000);
+    // 1. Resolve redirect from GitHub to S3 (objects.githubusercontent.com)
+    for (uint8_t attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+        WiFiClientSecure redirectClient;
+        redirectClient.setInsecure();
+        redirectClient.setTimeout(HTTP_TIMEOUT_MS);
+        redirectClient.setHandshakeTimeout(15);
 
-    if (!http.begin(client, downloadUrl)) {
-        setStatus("Download begin error");
-        Serial.println(F("[OTA] HTTP begin failed for firmware download"));
-        return;
+        HTTPClient redirectHttp;
+        redirectHttp.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+        redirectHttp.setTimeout(HTTP_TIMEOUT_MS);
+        redirectHttp.collectHeaders(headerKeys, 1);
+
+        Serial.printf("[OTA] Checking download redirect (attempt %u/%u)...\n", attempt, MAX_RETRY_ATTEMPTS);
+        if (!redirectHttp.begin(redirectClient, downloadUrl)) {
+            Serial.printf("[OTA] redirectHttp.begin failed (attempt %u/%u)\n", attempt, MAX_RETRY_ATTEMPTS);
+            if (attempt < MAX_RETRY_ATTEMPTS) {
+                vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+                continue;
+            }
+            setStatus("Redirect init error");
+            return;
+        }
+
+        redirectHttp.addHeader("User-Agent", USER_AGENT);
+        int redirectCode = redirectHttp.GET();
+
+        if (redirectCode < 0) {
+            Serial.printf("[OTA] Redirect probe error %d on attempt %u/%u: %s\n",
+                          redirectCode, attempt, MAX_RETRY_ATTEMPTS, redirectHttp.errorToString(redirectCode).c_str());
+            redirectHttp.end();
+            redirectClient.stop();
+            if (attempt < MAX_RETRY_ATTEMPTS) {
+                vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+                continue;
+            }
+            char errBuf[64];
+            snprintf(errBuf, sizeof(errBuf), "Redirect error %d", redirectCode);
+            setStatus(errBuf);
+            return;
+        }
+
+        if (redirectCode == 301 || redirectCode == 302 || downloadUrl.indexOf("github.com") >= 0) {
+            String redirectUrl = redirectHttp.header("Location");
+            if (!redirectUrl.isEmpty()) {
+                targetUrl = redirectUrl;
+                Serial.printf("[OTA] HTTP %d redirect caught! Clean target URL: %s\n",
+                              redirectCode, targetUrl.c_str());
+            }
+        } else {
+            Serial.printf("[OTA] Direct download URL response code: %d\n", redirectCode);
+        }
+
+        // Close initial session cleanly before starting the new download session
+        redirectHttp.end();
+        redirectClient.stop();
+        break;
     }
 
-    http.addHeader("User-Agent", USER_AGENT);
+    // Brief pause to ensure socket cleanup and memory reclamation
+    vTaskDelay(pdMS_TO_TICKS(200));
 
-    int httpCode = http.GET();
-    if (httpCode != HTTP_CODE_OK) {
+    // 2. Step 2: Clean separate TLS session for downloading binary
+    Serial.printf("[OTA] Step 2: Connecting directly to download URL: %s\n", targetUrl.c_str());
+    setStatus("Downloading firmware...");
+
+    int downloadCode = 0;
+    int contentLength = 0;
+
+    WiFiClientSecure downloadClient;
+    downloadClient.setInsecure();
+    downloadClient.setTimeout(HTTP_TIMEOUT_MS);
+    downloadClient.setHandshakeTimeout(15);
+
+    HTTPClient downloadHttp;
+    downloadHttp.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    downloadHttp.setTimeout(HTTP_TIMEOUT_MS);
+
+    for (uint8_t attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+        Serial.printf("[OTA] Connecting to binary stream (attempt %u/%u)...\n", attempt, MAX_RETRY_ATTEMPTS);
+        if (!downloadHttp.begin(downloadClient, targetUrl)) {
+            Serial.printf("[OTA] downloadHttp.begin failed (attempt %u/%u)\n", attempt, MAX_RETRY_ATTEMPTS);
+            if (attempt < MAX_RETRY_ATTEMPTS) {
+                vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+                continue;
+            }
+            setStatus("Download init error");
+            return;
+        }
+
+        downloadHttp.addHeader("User-Agent", USER_AGENT);
+        downloadCode = downloadHttp.GET();
+
+        if (downloadCode < 0) {
+            Serial.printf("[OTA] Download GET failed with error %d on attempt %u/%u: %s\n",
+                          downloadCode, attempt, MAX_RETRY_ATTEMPTS, downloadHttp.errorToString(downloadCode).c_str());
+            downloadHttp.end();
+            downloadClient.stop();
+            if (attempt < MAX_RETRY_ATTEMPTS) {
+                char retryBuf[64];
+                snprintf(retryBuf, sizeof(retryBuf), "Retry DL (%u/%u)...", attempt + 1, MAX_RETRY_ATTEMPTS);
+                setStatus(retryBuf);
+                vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+                continue;
+            }
+        } else {
+            break;
+        }
+    }
+
+    if (downloadCode != HTTP_CODE_OK) {
         char errBuf[64];
-        snprintf(errBuf, sizeof(errBuf), "Download HTTP %d", httpCode);
+        snprintf(errBuf, sizeof(errBuf), "Download HTTP %d", downloadCode);
         setStatus(errBuf);
-        Serial.printf("[OTA] Download failed, HTTP code: %d\n", httpCode);
-        http.end();
+        Serial.printf("[OTA] Download failed, HTTP code: %d\n", downloadCode);
+        downloadHttp.end();
+        downloadClient.stop();
         return;
     }
 
-    int contentLength = http.getSize();
+    contentLength = downloadHttp.getSize();
     Serial.printf("[OTA] Image size: %d bytes\n", contentLength);
 
     if (contentLength <= 0) {
         setStatus("Invalid binary size");
         Serial.println(F("[OTA] Error: Invalid Content-Length"));
-        http.end();
+        downloadHttp.end();
+        downloadClient.stop();
         return;
     }
 
@@ -298,54 +435,33 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
         snprintf(errBuf, sizeof(errBuf), "OTA begin err: %s", Update.errorString());
         setStatus(errBuf);
         Serial.printf("[OTA] Update.begin failed: %s\n", Update.errorString());
-        http.end();
+        downloadHttp.end();
+        downloadClient.stop();
         return;
     }
 
-    WiFiClient* stream = http.getStreamPtr();
-    uint8_t buffer[1024];
-    int bytesWritten = 0;
     _progress = 0;
-    unsigned long lastDataTime = millis();
-
-    while (http.connected() && (bytesWritten < contentLength)) {
-        size_t availableBytes = stream->available();
-        if (availableBytes > 0) {
-            size_t toRead = (availableBytes > sizeof(buffer)) ? sizeof(buffer) : availableBytes;
-            int bytesRead = stream->readBytes(buffer, toRead);
-            if (bytesRead > 0) {
-                size_t written = Update.write(buffer, bytesRead);
-                if (written != (size_t)bytesRead) {
-                    setStatus("Flash write error");
-                    Serial.println(F("[OTA] Error: Update.write size mismatch"));
-                    Update.abort();
-                    http.end();
-                    return;
-                }
-                bytesWritten += bytesRead;
-                _progress = (int)(((int64_t)bytesWritten * 100) / contentLength);
-                lastDataTime = millis();
-            }
-        } else {
-            if (millis() - lastDataTime > 10000) {
-                setStatus("Stream timeout");
-                Serial.println(F("[OTA] Error: Download stream timeout (10s no data)"));
-                Update.abort();
-                http.end();
-                return;
-            }
-            vTaskDelay(pdMS_TO_TICKS(10));
+    Update.onProgress([this](size_t progress, size_t total) {
+        if (total > 0) {
+            _progress = (int)((progress * 100) / total);
         }
-    }
+    });
 
-    if (bytesWritten != contentLength) {
+    setStatus("Flashing firmware...");
+    Serial.println(F("[OTA] Step 3: Streaming binary directly into flash via Update.writeStream..."));
+
+    size_t written = Update.writeStream(downloadHttp.getStream());
+    Serial.printf("[OTA] Stream write finished. Written: %u / %d bytes\n",
+                  (unsigned int)written, contentLength);
+
+    if (written != (size_t)contentLength) {
         char errBuf[64];
-        snprintf(errBuf, sizeof(errBuf), "Size mismatch %d/%d", bytesWritten, contentLength);
+        snprintf(errBuf, sizeof(errBuf), "Size mismatch %u/%d", (unsigned int)written, contentLength);
         setStatus(errBuf);
-        Serial.printf("[OTA] Error: bytesWritten (%d) != contentLength (%d)\n",
-                      bytesWritten, contentLength);
+        Serial.printf("[OTA] Flash write mismatch: written %u != %d\n", (unsigned int)written, contentLength);
         Update.abort();
-        http.end();
+        downloadHttp.end();
+        downloadClient.stop();
         return;
     }
 
@@ -354,13 +470,16 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
         snprintf(errBuf, sizeof(errBuf), "OTA end err: %s", Update.errorString());
         setStatus(errBuf);
         Serial.printf("[OTA] Update.end failed: %s\n", Update.errorString());
-        http.end();
+        downloadHttp.end();
+        downloadClient.stop();
         return;
     }
 
-    http.end();
+    downloadHttp.end();
+    downloadClient.stop();
 
     if (Update.isFinished()) {
+        _progress = 100;
         setStatus("Update complete! Rebooting...");
         Serial.println(F("[OTA] Firmware successfully installed. Rebooting ESP32..."));
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -370,3 +489,4 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
         Serial.println(F("[OTA] Error: Update.isFinished() returned false."));
     }
 }
+

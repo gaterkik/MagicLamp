@@ -59,6 +59,14 @@ public:
     bool isEffectInstalled(const String& effectId) const;
 
     /**
+     * @brief Robust HTTPS file downloader with 15s timeout and up to 3 retries on connection error (<0).
+     * @param url Remote HTTPS URL.
+     * @param outContent Output buffer for downloaded content.
+     * @return true if successfully downloaded.
+     */
+    bool downloadFile(const String& url, String& outContent);
+
+    /**
      * @brief Fetch remote store/manifest.json from GitHub Raw.
      * @param outJson String buffer to receive the JSON manifest.
      * @return true if successfully fetched.

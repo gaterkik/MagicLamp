@@ -222,7 +222,7 @@ void LampWebServer::handleStatus() {
     bool isAp = m_wifi ? m_wifi->isApMode() : false;
     bool isConnected = m_wifi ? m_wifi->isConnected() : false;
 
-    const char* imuStatus = m_imu ? m_imu->getStatusString() : "Not Found on GPIO 5/6";
+    const char* imuStatus = m_imu ? m_imu->getStatus() : "Not Found (No IMU instance)";
     const char* otaStatus = m_ota ? m_ota->getLastStatus() : "Idle";
     const char* latestVer = m_ota ? m_ota->getLatestVersion() : "";
     int otaProg = m_ota ? m_ota->getProgress() : 0;
@@ -253,6 +253,7 @@ void LampWebServer::handleStatus() {
                      ",\"uptime\":" + String((unsigned long)uptimeSec) +
                      ",\"freeHeap\":" + String((unsigned long)freeHeapKb) +
                      ",\"imuStatus\":\"" + String(imuStatus) + "\"" +
+                     ",\"imu\":\"" + String(imuStatus) + "\"" +
                      ",\"version\":\"" + String(FIRMWARE_VERSION) + "\"" +
                      ",\"otaStatus\":\"" + String(otaStatus) + "\"" +
                      ",\"latestVersion\":\"" + String(latestVer) + "\"" +

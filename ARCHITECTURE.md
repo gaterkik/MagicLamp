@@ -9,8 +9,12 @@
 | :--- | :--- | :--- | :--- |
 | **LED-матрица 16x16** | `DIN` | **GPIO 2** | WS2812B, 256 LED, вход снизу (`Y=0`), горизонтальная змейка, кольцо по `X`. |
 | **Кнопка TTP223** | `I/O` | **GPIO 7** | HIGH при касании. Удержание от 700 мс шлет тики каждые 40 мс. Сброс — 5 кликов. |
-| **Гироскоп GY-521** | `SDA` / `SCL` | **GPIO 6 / GPIO 5** | Шина I2C (100 кГц), адреса `0x68` / `0x69`. Принимать любой `WHO_AM_I` при наличии I2C ACK! |
+| **Гироскоп GY-521** | `SDA` / `SCL` | **GPIO 6 / GPIO 5** | Шина I2C (100 кГц), адреса `0x68` / `0x69`. Принимать любой `WHO_AM_I` при наличии I2C ACK! Расширенный авто-поиск по GPIO 4, 5, 6, 8, 9. |
 | **Микрофон INMP441** | `SCK`/`WS`/`SD` | **GPIO 18 / 19 / 20** | Аппаратный I2S Standard Mode (`driver/i2s_std.h`), DMA + 128-pt FFT + AGC. |
+
+### Требования к диагностике и шине I2C (`ImuMpu6050`):
+- **Проверка электрических уровней линий:** перед запуском I2C выполняется аппаратная проверка электрических уровней SDA и SCL (`digitalRead` до старта шины) для контроля наличия питания 3.3V на подтяжках модуля GY-521. Если обнаружен `LOW`, формируется точный диагноз отсутствия подтяжки или питания 3.3V (`No pull-up / Check 3.3V on GY-521`).
+- **Расширенный авто-поиск пинов:** при отсутствии ответа на стандартных пинах (GPIO 6 / GPIO 5) и зеркальной паре производится расширенное сканирование шины по свободным пинам (`GPIO 4, 5, 6, 8, 9`) на случай сдвига маркировки на плате ESP32-C6. Точный статус и координаты найденных пинов транслируются в `/api/status` и отображаются в WebUI.
 
 ## 2. Версионирование и конфигурация сети (`version.h` и `secrets.h`)
 1. **`include/version.h`:** Содержит `#define FIRMWARE_VERSION "0.3.0"`.
@@ -19,16 +23,22 @@
    Также создается шаблон `include/secrets.example.h` (с пустыми полями) для репозитория GitHub.
 3. **Логика подключения `WiFiManager` (`src/network/wifi_manager.*`):**
    - При старте пытается подключиться к сети из `include/secrets.h` (или сохраненной в `Preferences` NVS).
+   - Для максимальной стабильности радиоканала отключает энергосбережение Wi-Fi: `WiFi.setSleep(false)` и полностью выключает AP (`WiFi.enableAP(false)`) при успешном подключении к STA.
    - Поднимает mDNS с именем `magiclamp` (`http://magiclamp.local`).
    - Если за 15 секунд подключиться к роутеру не удалось — автоматически поднимает точку доступа `MagicLamp-Setup` (с Captive Portal для ввода нового Wi-Fi).
    - Поддерживает фоновый `ArduinoOTA` для мгновенной заливки прошивки по локальной сети без кабеля.
 
 ## 3. Архитектура облачного обновления с GitHub (`src/network/ota_github.*`)
 - **Эндпоинт проверки:** `https://api.github.com/repos/gaterkik/MagicLamp/releases/latest`
-- **Транспорт:** `WiFiClientSecure` с `client.setInsecure()` (чтобы обновление работало безотказно без привязки к сроку действия корневых сертификатов) + `HTTPClient` с `setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS)` (так как GitHub отдает бинарники релиза через 302 редирект на `objects.githubusercontent.com`).
+- **Транспорт и стабильность HTTPS на ESP32-C6:**
+  - Обязательное отключение энергосбережения Wi-Fi: `WiFi.setSleep(false)`.
+  - Использование `WiFiClientSecure` с `client.setInsecure()`.
+  - Установка таймаута TLS рукопожатия и сокета: 15 секунд.
+  - До 3 автоматических повторов с паузой при ошибке соединения (код возврата `< 0`, например `-1` connection failed).
+  - **Разделение TLS-сессий при HTTP 302 редиректе:** GitHub перенаправляет скачивание релиза с `github.com` на CDN `objects.githubusercontent.com`. Во избежание сбоев TLS-сессии на ESP32-C6 перенаправление обрабатывается с явным закрытием предыдущего соединения и созданием нового чистого экземпляра `WiFiClientSecure` для целевого URL скачивания `firmware.bin`.
 - **Заголовки запроса:** Обязателен заголовок `User-Agent: MagicLamp-ESP32C6-OTA`.
 - **Алгоритм:**
-  1. Парсинг JSON ответа GitHub API: извлечение `tag_name` (например, `"v0.3.1"` -> очистка от префикса `v` и сравнение версий с `FIRMWARE_VERSION`).
+  1. Парсинг JSON ответа GitHub API: извлечение `tag_name` (например, `"v0.5.1"` -> очистка от префикса `v` и сравнение версий с `FIRMWARE_VERSION`).
   2. Поиск в массиве `assets` файла с именем `firmware.bin` и извлечение его `browser_download_url`.
   3. Скачивание потока и запись во флеш через стандартную библиотеку `<Update.h>` (`Update.begin(contentLength, U_FLASH)` -> `Update.writeStream()` -> `Update.end(true)`).
   4. Перед стартом прошивки матрица гасится (или показывает спокойный индикатор), после успешного `Update.end(true)` вызывается `ESP.restart()`.
@@ -63,7 +73,8 @@
     6) `cyber_pulse` (Киберпанк-пульс — неоновые кольца и математический RPN/волновой шейдер с реакцией на звук/время).
 - **Менеджер магазина `StoreManager` (`src/network/store_manager.h`, `src/network/store_manager.cpp`):**
   - Монтирует `LittleFS.begin(true)` при старте, сканирует `/effects/*.eff` и регистрирует их в `EffectManager`.
-  - Умеет по HTTPS (`WiFiClientSecure` с `setInsecure()` + `HTTPClient` с `HTTPC_STRICT_FOLLOW_REDIRECTS`) скачивать файл `.eff` из `https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/effects/<id>.eff`, проверять его валидность, сохранять в `/effects/<id>.eff` и сразу активировать эффект без перезагрузки лампы.
+  - Умеет по HTTPS (`WiFiClientSecure` с `setInsecure()` + `HTTPClient`) скачивать файл `.eff` из `https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/effects/<id>.eff`, проверять его валидность, сохранять в `/effects/<id>.eff` и сразу активировать эффект без перезагрузки лампы.
+  - **Стабильность HTTPS на ESP32-C6:** `WiFi.setSleep(false)`, таймаут TLS-соединения 15 секунд, до 3 автоматических повторов при ошибке соединения (`< 0`), корректная обработка редиректов с пересозданием сессии при смене хоста.
 - **Новые REST API эндпоинты в `WebServer`:**
   - `GET /api/store/installed` — список установленных в LittleFS `.eff` эффектов + статистика памяти LittleFS (`usedBytes`, `totalBytes`).
   - `GET /api/store/catalog` — проксирование/кеширование или получение `manifest.json` с GitHub (`https://raw.githubusercontent.com/gaterkik/MagicLamp/main/store/manifest.json`), плюс в самом WebUI фронтенде прямой `fetch` каталога с GitHub Raw с fallback на `/api/store/catalog`.

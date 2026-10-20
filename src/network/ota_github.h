@@ -55,6 +55,9 @@ private:
 
     static constexpr uint32_t INITIAL_CHECK_DELAY_MS = 30000;       // 30 seconds after boot
     static constexpr uint32_t PERIODIC_CHECK_INTERVAL_MS = 1800000; // 30 minutes
+    static constexpr uint32_t HTTP_TIMEOUT_MS = 15000;              // 15 seconds TLS & socket timeout
+    static constexpr uint8_t MAX_RETRY_ATTEMPTS = 3;                // 3 retry attempts on connection error (<0)
+    static constexpr uint32_t RETRY_DELAY_MS = 1500;                // 1.5 seconds between retry attempts
     static constexpr const char* GITHUB_API_URL = "https://api.github.com/repos/gaterkik/MagicLamp/releases/latest";
     static constexpr const char* USER_AGENT = "MagicLamp-ESP32C6-OTA";
 };

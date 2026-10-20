@@ -8,13 +8,15 @@
 - `FIX_REQUIRED` — QA-Тестировщик нашел ошибки и вернул задачу на доработку (см. поле `QA_Notes`).
 - `DONE` — проверено QA-Тестировщиком и полностью готово.
 
-> **Железное правило Диспетчера:** Задачи Фазы 1 и Фазы 2 полностью закрыты (`DONE`). Выполняй задачи **Фазы 3** в режиме Фазового Автопилота (`Task 3.1` -> `Task 3.2` -> `Task 3.3`). Редактировать `PRD.md`, `ARCHITECTURE.md` и `GEMINI.md` строго запрещено!
+> **Железное правило Диспетчера:** Задачи Фаз 1, 2, 3 и 4 полностью закрыты (`DONE`). Редактировать `PRD.md`, `ARCHITECTURE.md` и `GEMINI.md` строго запрещено!
 
 ---
 
 ## Закрытые фазы:
 - **Фаза 1 (Task 1.1 – 1.4):** Базовый скелет и драйверы — `DONE`
 - **Фаза 2 (Task 2.1 – 2.4):** Движок 9 базовых эффектов и NVS — `DONE`
+- **Фаза 3 (Task 3.1 – 3.4):** Калибровка железа, 10-й эффект, Wi-Fi, WebUI, Silent OTA — `DONE`
+- **Фаза 4 (Task 4.1 – 4.4):** Магазин эффектов, LittleFS, EffectVM, стабилизация TLS и диагностика GY-521 — `DONE`
 
 ---
 
@@ -154,4 +156,27 @@
   1. Папка `store/effects/` содержит все 6 файлов `.eff`.
   2. `store/manifest.json` является валидным JSON и содержит полные метаданные всех 6 эффектов.
   3. Формат `.eff` файлов совместим с парсером `EffectVM`.
+- **QA_Notes:** Проверено QA: замечаний нет.
+
+---
+
+### [Task 4.4] Стабилизация TLS/HTTPS для GitHub OTA (исправление ошибки -1) и глубокая диагностика шины GY-521 (v0.5.1)
+- **Status:** `DONE`
+- **Files:** `include/version.h`, `src/network/wifi_manager.cpp`, `src/network/ota_github.h`, `src/network/ota_github.cpp`, `src/network/store_manager.h`, `src/network/store_manager.cpp`, `src/hal/imu_mpu6050.h`, `src/hal/imu_mpu6050.cpp`, `src/network/web_server.cpp`
+- **Description:**
+  1. **Версия прошивки (`include/version.h`):** Поднять `FIRMWARE_VERSION` до `"0.5.1"`.
+  2. **Стабильность HTTPS/TLS (`wifi_manager.cpp`, `ota_github.cpp`, `store_manager.cpp`):**
+     - В `wifi_manager.cpp`: вызывать `WiFi.setSleep(false)` для отключения энергосбережения радиомодуля Wi-Fi и отключать точку доступа AP (`WiFi.enableAP(false)`) при успешном подключении к STA.
+     - В `ota_github.cpp` и `store_manager.cpp`: установить таймаут TLS-рукопожатия и сокета 15 с (`setTimeout(15000)` / `setHandshakeTimeout(15)`), реализовать до 3 автоматических повторов с задержкой при коде соединения `< 0` (например, ошибка `-1`).
+     - В `ota_github.cpp`: при скачивании бинарника релиза (HTTP 302 редирект с `github.com` на `objects.githubusercontent.com`) производить чистое разделение TLS-сессий — перехватывать заголовок `Location`, закрывать соединение с `github.com` и создавать новый чистый экземпляр `WiFiClientSecure` с рукопожатием непосредственно к целевому хосту `objects.githubusercontent.com` для скачивания `firmware.bin` во флеш.
+  3. **Глубокая диагностика I2C и авто-поиск GY-521 (`imu_mpu6050.h`, `imu_mpu6050.cpp`, `web_server.cpp`):**
+     - Проверка электрических уровней линий перед инициализацией I2C (`digitalRead` на пинах в режиме `INPUT` до вызова `Wire.begin`): на линиях должен быть логический `HIGH`. Если зафиксирован `LOW`, формировать точный диагностический статус: `"No pull-up / Check 3.3V on GY-521"`.
+     - Авто-сканер пар пинов среди свободных GPIO (`GPIO 4, 5, 6, 8, 9`) на адресах `0x68` и `0x69` на случай сдвига маркировки платы ESP32-C6.
+     - Вывод детального статуса в `/api/status` и WebUI (например, `Online (SDA:6, SCL:5, addr:0x68, who:0x..)` или `No pull-up / Check 3.3V on GY-521 (SDA:LOW, SCL:HIGH)` или `Not Found (SDA/SCL HIGH, no ACK on GPIO 4,5,6,8,9)`).
+- **Acceptance Criteria (Критерии для QA):**
+  1. `FIRMWARE_VERSION` в `include/version.h` равна `"0.5.1"`.
+  2. `WiFi.setSleep(false)` вызывается при подключении Wi-Fi, радиомодуль не засыпает, AP отключается в STA режиме.
+  3. `OtaGithub` и `StoreManager` имеют таймаут 15 с, 3 повтора при коде соединения `< 0`, а `OtaGithub` корректно разделяет TLS-сессии при HTTP 302 редиректе на `objects.githubusercontent.com`.
+  4. `ImuMpu6050` проверяет электрические уровни SDA/SCL до старта I2C и сканирует комбинации свободных пинов (`GPIO 4, 5, 6, 8, 9`) с выдачей понятной диагностики в `/api/status` и WebUI.
+  5. Сборка `pio run` завершается со статусом `SUCCESS`.
 - **QA_Notes:** Проверено QA: замечаний нет.
