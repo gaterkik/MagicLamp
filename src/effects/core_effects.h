@@ -37,7 +37,7 @@ public:
 private:
     void stepSimulation();
 
-    static constexpr uint8_t MAX_FIRE_SPARKS = 8;
+    static constexpr uint8_t MAX_FIRE_SPARKS = 2;
 
     struct FireSpark {
         bool active = false;

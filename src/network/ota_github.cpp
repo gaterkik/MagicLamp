@@ -136,30 +136,61 @@ bool OtaGithub::parseReleaseJson(const String& json, String& outTag, String& out
     if (quoteEnd < 0) return false;
 
     outTag = json.substring(quoteStart + 1, quoteEnd);
+    outTag.trim();
+    if (outTag.isEmpty()) return false;
 
-    // 2. Extract firmware.bin asset download URL
+    // 2. Extract firmware.bin asset download URL if present in JSON buffer
+    outUrl = "";
     int binIdx = json.indexOf("firmware.bin");
-    if (binIdx < 0) return false;
+    if (binIdx >= 0) {
+        int objStart = json.lastIndexOf('{', binIdx);
+        int objEnd = json.indexOf('}', binIdx);
+        if (objStart >= 0 && objEnd > objStart) {
+            String assetObj = json.substring(objStart, objEnd + 1);
+            int urlKeyIdx = assetObj.indexOf("\"browser_download_url\"");
+            if (urlKeyIdx >= 0) {
+                int urlColon = assetObj.indexOf(':', urlKeyIdx);
+                if (urlColon >= 0) {
+                    int urlQuoteStart = assetObj.indexOf('"', urlColon);
+                    if (urlQuoteStart >= 0) {
+                        int urlQuoteEnd = assetObj.indexOf('"', urlQuoteStart + 1);
+                        if (urlQuoteEnd > urlQuoteStart) {
+                            outUrl = assetObj.substring(urlQuoteStart + 1, urlQuoteEnd);
+                        }
+                    }
+                }
+            }
+        }
 
-    int objStart = json.lastIndexOf('{', binIdx);
-    int objEnd = json.indexOf('}', binIdx);
-    if (objStart < 0 || objEnd < 0 || objEnd <= objStart) return false;
+        // Global search in json for browser_download_url containing firmware.bin
+        if (outUrl.isEmpty()) {
+            int urlKeyIdx = json.indexOf("\"browser_download_url\"");
+            while (urlKeyIdx >= 0) {
+                int urlColon = json.indexOf(':', urlKeyIdx);
+                if (urlColon >= 0) {
+                    int urlQuoteStart = json.indexOf('"', urlColon);
+                    if (urlQuoteStart >= 0) {
+                        int urlQuoteEnd = json.indexOf('"', urlQuoteStart + 1);
+                        if (urlQuoteEnd > urlQuoteStart) {
+                            String candidate = json.substring(urlQuoteStart + 1, urlQuoteEnd);
+                            if (candidate.indexOf("firmware.bin") >= 0) {
+                                outUrl = candidate;
+                                break;
+                            }
+                        }
+                    }
+                }
+                urlKeyIdx = json.indexOf("\"browser_download_url\"", urlKeyIdx + 22);
+            }
+        }
+    }
 
-    String assetObj = json.substring(objStart, objEnd + 1);
-    int urlKeyIdx = assetObj.indexOf("\"browser_download_url\"");
-    if (urlKeyIdx < 0) return false;
+    // 3. Deterministic direct fallback URL if browser_download_url was truncated or missing
+    if (outUrl.isEmpty() || outUrl.indexOf("firmware.bin") < 0) {
+        outUrl = "https://github.com/gaterkik/MagicLamp/releases/latest/download/firmware.bin";
+    }
 
-    int urlColon = assetObj.indexOf(':', urlKeyIdx);
-    if (urlColon < 0) return false;
-
-    int urlQuoteStart = assetObj.indexOf('"', urlColon);
-    if (urlQuoteStart < 0) return false;
-
-    int urlQuoteEnd = assetObj.indexOf('"', urlQuoteStart + 1);
-    if (urlQuoteEnd < 0) return false;
-
-    outUrl = assetObj.substring(urlQuoteStart + 1, urlQuoteEnd);
-    return (!outTag.isEmpty() && !outUrl.isEmpty());
+    return true;
 }
 
 void OtaGithub::runTask() {
@@ -249,8 +280,8 @@ void OtaGithub::runTask() {
     String remoteTag;
     String downloadUrl;
     if (!parseReleaseJson(payload, remoteTag, downloadUrl)) {
-        setStatus("Parse error (no firmware.bin)");
-        Serial.println(F("[OTA] Error parsing tag_name or firmware.bin asset in release JSON."));
+        setStatus("Parse error (no tag_name)");
+        Serial.println(F("[OTA] Error parsing tag_name in release JSON."));
         _isChecking = false;
         _isTaskRunning = false;
         _taskHandle = nullptr;
@@ -265,7 +296,7 @@ void OtaGithub::runTask() {
     // Compare versions
     if (!isNewerVersion(remoteTag.c_str(), FIRMWARE_VERSION)) {
         char msg[64];
-        snprintf(msg, sizeof(msg), "Up to date (v%s)", FIRMWARE_VERSION);
+        snprintf(msg, sizeof(msg), "Установлена актуальная версия (v%s)", FIRMWARE_VERSION);
         setStatus(msg);
         Serial.printf("[OTA] Current version v%s is up to date (remote: %s).\n",
                       FIRMWARE_VERSION, remoteTag.c_str());

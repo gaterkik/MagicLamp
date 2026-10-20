@@ -36,80 +36,86 @@ ImuMpu6050::ImuMpu6050(uint8_t sdaPin,
     strncpy(m_statusStr, "Initializing...", sizeof(m_statusStr));
 }
 
-bool ImuMpu6050::checkElectricalLevels(uint8_t sda, uint8_t scl, int& sdaLevel, int& sclLevel) {
+void ImuMpu6050::recoverBus(uint8_t sda, uint8_t scl) {
     Wire.end();
-    pinMode(sda, INPUT);
-    pinMode(scl, INPUT);
+    pinMode(scl, OUTPUT);
+    pinMode(sda, INPUT_PULLUP);
+    for (uint8_t i = 0; i < 9; i++) {
+        digitalWrite(scl, LOW);
+        delayMicroseconds(5);
+        digitalWrite(scl, HIGH);
+        delayMicroseconds(5);
+    }
+
+    // Bus STOP condition: SDA LOW -> HIGH while SCL is HIGH
+    pinMode(sda, OUTPUT);
+    digitalWrite(sda, LOW);
+    delayMicroseconds(5);
+    digitalWrite(scl, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(sda, HIGH);
+    delayMicroseconds(5);
+
+    pinMode(sda, INPUT_PULLUP);
+    pinMode(scl, INPUT_PULLUP);
     delayMicroseconds(50);
-    sdaLevel = digitalRead(sda);
-    sclLevel = digitalRead(scl);
-    return (sdaLevel == HIGH && sclLevel == HIGH);
 }
 
 bool ImuMpu6050::scanPins() {
-    // 1. Electrical diagnostic on primary pins (SDA=6, SCL=5)
-    int sdaLvl = 0, sclLvl = 0;
-    bool pullupOk = checkElectricalLevels(m_sdaPin, m_sclPin, sdaLvl, sclLvl);
+    Wire.end();
 
-    Serial.printf("[IMU] Electrical check on primary pins SDA=%d (%s), SCL=%d (%s)\n",
-                  m_sdaPin, sdaLvl == HIGH ? "HIGH" : "LOW",
-                  m_sclPin, sclLvl == HIGH ? "HIGH" : "LOW");
-
-    if (!pullupOk) {
-        snprintf(m_statusStr, sizeof(m_statusStr),
-                 "No pull-up / Check 3.3V on GY-521 (SDA:%s, SCL:%s)",
-                 sdaLvl == HIGH ? "HIGH" : "LOW",
-                 sclLvl == HIGH ? "HIGH" : "LOW");
-        Serial.printf("[IMU] DIAGNOSTIC: %s\n", m_statusStr);
-        m_fallback = true;
-        updateFallback(millis());
-        return false;
+    // 1. Read and log electrical levels of candidate pins {4, 5, 6, 3}
+    const uint8_t candidatePins[] = {4, 5, 6, 3};
+    const size_t numPins = sizeof(candidatePins) / sizeof(candidatePins[0]);
+    int pinLevels[4];
+    for (size_t i = 0; i < numPins; i++) {
+        pinMode(candidatePins[i], INPUT);
+        delayMicroseconds(20);
+        pinLevels[i] = digitalRead(candidatePins[i]);
     }
 
-    // 2. Levels are HIGH: Probe standard pair (SDA=6, SCL=5)
-    Serial.printf("[IMU] Probing standard pair SDA=%d, SCL=%d (100kHz)...\n", m_sdaPin, m_sclPin);
+    Serial.printf("[IMU] Candidate pin levels: GPIO4=%s, GPIO5=%s, GPIO6=%s, GPIO3=%s\n",
+                  pinLevels[0] == HIGH ? "HIGH" : "LOW",
+                  pinLevels[1] == HIGH ? "HIGH" : "LOW",
+                  pinLevels[2] == HIGH ? "HIGH" : "LOW",
+                  pinLevels[3] == HIGH ? "HIGH" : "LOW");
+
+    // 2. Try primary pair (SDA=m_sdaPin, SCL=m_sclPin) first
     if (tryInitOnPins(m_sdaPin, m_sclPin)) {
         return true;
     }
 
-    // 3. Probe mirror pair (SDA=5, SCL=6)
-    uint8_t mirrorSda = m_sclPin;
-    uint8_t mirrorScl = m_sdaPin;
-    Serial.printf("[IMU] Not detected on standard pair. Probing mirror pair SDA=%d, SCL=%d...\n",
-                  mirrorSda, mirrorScl);
-    if (tryInitOnPins(mirrorSda, mirrorScl)) {
+    // 3. Try mirror pair (SDA=m_sclPin, SCL=m_sdaPin)
+    if (tryInitOnPins(m_sclPin, m_sdaPin)) {
         return true;
     }
 
-    // 4. Auto-search across free GPIOs: 4, 5, 6, 8, 9
-    Serial.println(F("[IMU] Sensor not responding on 6/5. Scanning GPIO 4, 5, 6, 8, 9..."));
-    const uint8_t candidatePins[] = {4, 5, 6, 8, 9};
-    const size_t numPins = sizeof(candidatePins) / sizeof(candidatePins[0]);
-
+    // 4. Scan all 12 pairs from {4, 5, 6, 3}
     for (size_t i = 0; i < numPins; i++) {
         for (size_t j = 0; j < numPins; j++) {
             if (i == j) continue;
             uint8_t sda = candidatePins[i];
             uint8_t scl = candidatePins[j];
 
-            // Already checked primary and mirror
+            // Skip primary and mirror pairs already tested
             if ((sda == m_sdaPin && scl == m_sclPin) ||
-                (sda == mirrorSda && scl == mirrorScl)) {
+                (sda == m_sclPin && scl == m_sdaPin)) {
                 continue;
             }
 
-            int pSdaLvl = 0, pSclLvl = 0;
-            if (checkElectricalLevels(sda, scl, pSdaLvl, pSclLvl)) {
-                if (tryInitOnPins(sda, scl)) {
-                    Serial.printf("[IMU] Sensor discovered on candidate pins: %s\n", m_statusStr);
-                    return true;
-                }
+            if (tryInitOnPins(sda, scl)) {
+                return true;
             }
         }
     }
 
-    // 5. Not found on any combination of candidate pins
-    snprintf(m_statusStr, sizeof(m_statusStr), "Not Found (SDA/SCL HIGH, no ACK on GPIO 4,5,6,8,9)");
+    // 5. Sensor not found on any combination of candidate pins
+    snprintf(m_statusStr, sizeof(m_statusStr),
+             "Not Found (GPIO4:%s, GPIO5:%s, GPIO6:%s, GPIO3:%s)",
+             pinLevels[0] == HIGH ? "HIGH" : "LOW",
+             pinLevels[1] == HIGH ? "HIGH" : "LOW",
+             pinLevels[2] == HIGH ? "HIGH" : "LOW",
+             pinLevels[3] == HIGH ? "HIGH" : "LOW");
     Serial.printf("[IMU] WARNING: %s. Activating Graceful Fallback mode.\n", m_statusStr);
     m_fallback = true;
     updateFallback(millis());
@@ -122,8 +128,7 @@ bool ImuMpu6050::begin() {
 }
 
 bool ImuMpu6050::tryInitOnPins(uint8_t sda, uint8_t scl) {
-    pinMode(sda, INPUT_PULLUP);
-    pinMode(scl, INPUT_PULLUP);
+    recoverBus(sda, scl);
 
     Wire.begin(sda, scl, 100000);
     Wire.setTimeOut(20);

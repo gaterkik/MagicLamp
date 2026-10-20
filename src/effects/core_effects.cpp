@@ -119,10 +119,41 @@ void EffectFire::stepSimulation() {
     // Copy current state to prevHeat for smooth interpolation
     memcpy(m_prevHeat, m_currentHeat, sizeof(m_currentHeat));
 
-    // Step 1: Cool down cells for Y = 0..10 (progressive cooling extinguishing flame before Y=11)
-    for (int y = 0; y <= 10; y++) {
+    // Perlin noise mask for columns X (0..15) wrapping around cylinder
+    // Calculates tongue heights (Y=0..12) and draft/cooling mask
+    uint8_t tongueHeights[MATRIX_WIDTH];
+    uint8_t colDraft[MATRIX_WIDTH];
+    uint16_t timeZ = static_cast<uint16_t>(millis() / 5);
+
+    for (int x = 0; x < MATRIX_WIDTH; x++) {
+        uint8_t angle = (x * 256) / MATRIX_WIDTH;
+        uint8_t nx = cos8(angle);
+        uint8_t ny = sin8(angle);
+        uint8_t noise = inoise8(nx * 2, ny * 2, timeZ); // 0..255
+        colDraft[x] = noise;
+        // Tongue height varies between 5 and 12 across columns
+        tongueHeights[x] = map(noise, 20, 235, 5, 12);
+        tongueHeights[x] = constrain(tongueHeights[x], 4, 12);
+    }
+
+    // Step 1: Column-specific cooling based on Perlin draft and tongue height
+    for (int y = 0; y <= 12; y++) {
         for (int x = 0; x < MATRIX_WIDTH; x++) {
-            uint8_t cool = random8(8, 16) + (y * 2);
+            uint8_t cool;
+            if (y > tongueHeights[x]) {
+                // Rapid cooling above individual flame tongue tip
+                cool = 35 + (y - tongueHeights[x]) * 25;
+            } else {
+                // Progressive cooling inside flame tongue, modulated by column draft
+                cool = random8(8, 16) + (y * 2);
+                uint8_t draftBonus = colDraft[x] / 30;
+                if (cool > draftBonus) {
+                    cool -= draftBonus;
+                } else {
+                    cool = 4;
+                }
+            }
+
             if (m_currentHeat[y][x] > cool) {
                 m_currentHeat[y][x] -= cool;
             } else {
@@ -131,49 +162,50 @@ void EffectFire::stepSimulation() {
         }
     }
 
-    // Step 2: Heat diffuses UPWARD within Y=0..10 and wraps around cylinder X seamlessly
-    for (int y = 10; y >= 1; y--) {
+    // Step 2: Convective vertical heat rise UPWARD within Y=0..12
+    // NO horizontal 3-point blur (eliminating water ripples / waves)
+    for (int y = 12; y >= 1; y--) {
         for (int x = 0; x < MATRIX_WIDTH; x++) {
-            int left = wrapX(x - 1);
-            int right = wrapX(x + 1);
-            // 3-point convolution with ring wrap on X
-            uint16_t sum = m_currentHeat[y - 1][left] + m_currentHeat[y - 1][x] * 2 + m_currentHeat[y - 1][right];
-            uint8_t diffused = static_cast<uint8_t>(sum / 4);
-            // Viscous flame blending
-            m_currentHeat[y][x] = static_cast<uint8_t>((diffused * 3 + m_currentHeat[y][x] * 2) / 5);
+            uint16_t heatBelow = m_currentHeat[y - 1][x];
+            // Pure vertical rise with viscosity/damping
+            m_currentHeat[y][x] = static_cast<uint8_t>((heatBelow * 4 + m_currentHeat[y][x]) / 5);
         }
     }
 
-    // Upper zone Y = 11..15 is strictly dark
-    for (int y = 11; y < MATRIX_HEIGHT; y++) {
+    // Upper zone Y = 13..15 is strictly dark
+    for (int y = 13; y < MATRIX_HEIGHT; y++) {
         for (int x = 0; x < MATRIX_WIDTH; x++) {
             m_currentHeat[y][x] = 0;
             m_prevHeat[y][x] = 0;
         }
     }
 
-    // Step 3: Randomly ignite new heat at bottom row Y=0
+    // Step 3: Randomly ignite new heat at bottom row Y=0, biased by column draft
     for (int x = 0; x < MATRIX_WIDTH; x++) {
-        if (random8(100) < 55) {
-            uint8_t spark = random8(160, 255);
+        uint8_t igniteChance = map(colDraft[x], 0, 255, 40, 75);
+        if (random8(100) < igniteChance) {
+            uint8_t minHeat = map(colDraft[x], 0, 255, 150, 210);
+            uint8_t spark = random8(minHeat, 255);
             m_currentHeat[0][x] = static_cast<uint8_t>((m_currentHeat[0][x] + spark) / 2);
         }
     }
 
-    // Step 4: Sporadically detach bright airborne sparks from flame tips (Y = 8..10)
-    if (random8(100) < 30) {
+    // Step 4: Sporadically detach bright airborne ember sparks from active flame tips
+    // Max 1-2 sparks simultaneously (MAX_FIRE_SPARKS = 2)
+    if (random8(100) < 18) {
         for (int i = 0; i < MAX_FIRE_SPARKS; i++) {
             if (!m_sparks[i].active) {
                 int sparkCol = random8(MATRIX_WIDTH);
                 m_sparks[i].active = true;
                 m_sparks[i].x = static_cast<float>(sparkCol);
-                m_sparks[i].y = 8.5f + (static_cast<float>(random8(20)) / 10.0f); // 8.5..10.5
-                m_sparks[i].vx = (static_cast<float>(random8(100)) - 50.0f) / 300.0f; // -0.16..+0.16 drift
-                m_sparks[i].vy = 0.18f + (static_cast<float>(random8(60)) / 250.0f);  // upward flight 0.18..0.42
+                m_sparks[i].y = static_cast<float>(tongueHeights[sparkCol]); // launch from tongue tip (Y=8..12)
+                m_sparks[i].vx = (static_cast<float>(random8(100)) - 50.0f) / 350.0f; // drift
+                m_sparks[i].vy = 0.16f + (static_cast<float>(random8(50)) / 250.0f);   // upward flight
                 m_sparks[i].brightness = 255.0f;
-                m_sparks[i].decay = 5.0f + (static_cast<float>(random8(35)) / 10.0f); // decay 5.0..8.5
-                // Color: bright golden-yellow / amber white
-                m_sparks[i].color = CRGB(255, random8(180, 250), random8(40, 120));
+                // Decay so spark extinguishes gracefully in the dark zone (Y=13..15)
+                m_sparks[i].decay = 6.0f + (static_cast<float>(random8(40)) / 10.0f); // decay 6.0..10.0
+                // Color: strictly deep red-orange / crimson embers (NO white, B=0)
+                m_sparks[i].color = CRGB(random8(180, 221), random8(15, 36), 0);
                 break;
             }
         }
@@ -182,7 +214,7 @@ void EffectFire::stepSimulation() {
 
 void EffectFire::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
     uint32_t now = millis();
-    // Simulation step interval scaled by m_speed (default 128 -> ~50ms, 3x slower than 16ms)
+    // Simulation step interval scaled by m_speed (default 128 -> ~50ms)
     uint32_t stepInterval = map(m_speed, 1, 255, 120, 25);
     if (stepInterval < 10) stepInterval = 10;
 
@@ -196,10 +228,10 @@ void EffectFire::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& 
     if (fraction > 1.0f) fraction = 1.0f;
     if (fraction < 0.0f) fraction = 0.0f;
 
-    // Render interpolated heat map: body Y=0..10, dark upper zone Y=11..15
+    // Render interpolated heat map: flame body Y=0..12, dark upper zone Y=13..15
     for (int y = 0; y < MATRIX_HEIGHT; y++) {
         for (int x = 0; x < MATRIX_WIDTH; x++) {
-            if (y > 10) {
+            if (y > 12) {
                 matrix.setPixel(x, y, CRGB::Black);
             } else {
                 float h0 = static_cast<float>(m_prevHeat[y][x]);
@@ -210,7 +242,7 @@ void EffectFire::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& 
         }
     }
 
-    // Render flying sparks through the upper dark zone (Y=11..15)
+    // Render flying sparks through the flame and upper dark zone (Y=13..15)
     for (int i = 0; i < MAX_FIRE_SPARKS; i++) {
         if (!m_sparks[i].active) continue;
 
@@ -227,7 +259,10 @@ void EffectFire::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& 
         }
 
         uint8_t bri = static_cast<uint8_t>(fmaxf(0.0f, fminf(255.0f, m_sparks[i].brightness)));
-        CRGB sparkColor = m_sparks[i].color;
+        // Ember cooling: shifts from CRGB(220, 35, 0) down to CRGB(100, 5, 0), zero blue/white
+        uint8_t r = map(bri, 0, 255, 100, m_sparks[i].color.r);
+        uint8_t g = map(bri, 0, 255, 5, m_sparks[i].color.g);
+        CRGB sparkColor = CRGB(r, g, 0);
         sparkColor.nscale8_video(bri);
 
         int px = static_cast<int>(floorf(m_sparks[i].x)) % MATRIX_WIDTH;
@@ -241,7 +276,7 @@ void EffectFire::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& 
             // Subtle vertical trailing tail
             if (py > 0) {
                 CRGB tailColor = sparkColor;
-                tailColor.nscale8_video(80);
+                tailColor.nscale8_video(70);
                 matrix.setPixel(px, py - 1, matrix.getPixel(px, py - 1) + tailColor);
             }
         }

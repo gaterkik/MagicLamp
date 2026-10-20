@@ -163,7 +163,7 @@ private:
     float m_rawAy;
     float m_rawAz;
 
-    bool checkElectricalLevels(uint8_t sda, uint8_t scl, int& sdaLevel, int& sclLevel);
+    void recoverBus(uint8_t sda, uint8_t scl);
     bool scanPins();
     bool tryInitOnPins(uint8_t sda, uint8_t scl);
     bool readRawData(int16_t& ax, int16_t& ay, int16_t& az);
