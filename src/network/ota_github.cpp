@@ -94,17 +94,6 @@ void OtaGithub::update(LedMatrix* matrix) {
             }
         }
     }
-
-    // 4. Visual progress feedback while updating
-    if (_isUpdating && matrix) {
-        if (!isPoweredOn()) {
-            matrix->clear(true);
-            FastLED.clear(true);
-            FastLED.show();
-        } else {
-            matrix->showOtaProgress(_progress, false, false);
-        }
-    }
 }
 
 bool OtaGithub::isNewerVersion(const char* remoteVer, const char* currentVer) {
@@ -200,6 +189,9 @@ bool OtaGithub::parseReleaseJson(const String& json, String& outTag, String& out
 void OtaGithub::runTask() {
     Serial.println(F("[OTA] Checking GitHub releases..."));
     setStatus("Connecting to GitHub...");
+    if (m_effectMgr) {
+        m_effectMgr->setOtaState(EffectManager::OTA_STATE_CHECKING);
+    }
 
     int httpCode = 0;
     String payload;
@@ -224,6 +216,7 @@ void OtaGithub::runTask() {
                 continue;
             }
             setStatus("HTTP begin failed");
+            if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
             _isChecking = false;
             _isTaskRunning = false;
             _taskHandle = nullptr;
@@ -274,6 +267,7 @@ void OtaGithub::runTask() {
             setStatus(errBuf);
             Serial.printf("[OTA] GitHub API request failed, HTTP code: %d\n", httpCode);
         }
+        if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
         _isChecking = false;
         _isTaskRunning = false;
         _taskHandle = nullptr;
@@ -286,6 +280,7 @@ void OtaGithub::runTask() {
     if (!parseReleaseJson(payload, remoteTag, downloadUrl)) {
         setStatus("Parse error (no tag_name)");
         Serial.println(F("[OTA] Error parsing tag_name in release JSON."));
+        if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
         _isChecking = false;
         _isTaskRunning = false;
         _taskHandle = nullptr;
@@ -304,6 +299,7 @@ void OtaGithub::runTask() {
         setStatus(msg);
         Serial.printf("[OTA] Current version v%s is up to date (remote: %s).\n",
                       FIRMWARE_VERSION, remoteTag.c_str());
+        if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_UP_TO_DATE);
         _isChecking = false;
         _isTaskRunning = false;
         _taskHandle = nullptr;
@@ -315,6 +311,7 @@ void OtaGithub::runTask() {
     Serial.printf("[OTA] New version available: %s > v%s. Starting update...\n",
                   remoteTag.c_str(), FIRMWARE_VERSION);
     setStatus("Downloading firmware...");
+    if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_DOWNLOADING, 0);
     _isChecking = false;
     _isUpdating = true;
     _progress = 0;
@@ -355,6 +352,7 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
                 continue;
             }
             setStatus("Redirect init error");
+            if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
             return;
         }
 
@@ -373,6 +371,7 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
             char errBuf[64];
             snprintf(errBuf, sizeof(errBuf), "Redirect error %d", redirectCode);
             setStatus(errBuf);
+            if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
             return;
         }
 
@@ -421,6 +420,7 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
                 continue;
             }
             setStatus("Download init error");
+            if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
             return;
         }
 
@@ -449,6 +449,7 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
         snprintf(errBuf, sizeof(errBuf), "Download HTTP %d", downloadCode);
         setStatus(errBuf);
         Serial.printf("[OTA] Download failed, HTTP code: %d\n", downloadCode);
+        if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
         downloadHttp.end();
         downloadClient.stop();
         return;
@@ -460,6 +461,7 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
     if (contentLength <= 0) {
         setStatus("Invalid binary size");
         Serial.println(F("[OTA] Error: Invalid Content-Length"));
+        if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
         downloadHttp.end();
         downloadClient.stop();
         return;
@@ -470,15 +472,7 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
         snprintf(errBuf, sizeof(errBuf), "OTA begin err: %s", Update.errorString());
         setStatus(errBuf);
         Serial.printf("[OTA] Update.begin failed: %s\n", Update.errorString());
-        if (m_matrix) {
-            if (!isPoweredOn()) {
-                m_matrix->clear(true);
-                FastLED.clear(true);
-                FastLED.show();
-            } else {
-                m_matrix->showOtaProgress(_progress, false, true);
-            }
-        }
+        if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
         downloadHttp.end();
         downloadClient.stop();
         return;
@@ -489,15 +483,10 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
         if (total > 0) {
             _progress = (int)((progress * 100) / total);
         }
-        if (m_matrix) {
-            if (!isPoweredOn()) {
-                m_matrix->clear(true);
-                FastLED.clear(true);
-                FastLED.show();
-            } else {
-                m_matrix->showOtaProgress(_progress, false, false);
-            }
+        if (m_effectMgr) {
+            m_effectMgr->setOtaState(EffectManager::OTA_STATE_DOWNLOADING, _progress);
         }
+        vTaskDelay(1);
     });
 
     setStatus("Flashing firmware...");
@@ -512,15 +501,7 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
         snprintf(errBuf, sizeof(errBuf), "Size mismatch %u/%d", (unsigned int)written, contentLength);
         setStatus(errBuf);
         Serial.printf("[OTA] Flash write mismatch: written %u != %d\n", (unsigned int)written, contentLength);
-        if (m_matrix) {
-            if (!isPoweredOn()) {
-                m_matrix->clear(true);
-                FastLED.clear(true);
-                FastLED.show();
-            } else {
-                m_matrix->showOtaProgress(_progress, false, true);
-            }
-        }
+        if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
         Update.abort();
         downloadHttp.end();
         downloadClient.stop();
@@ -532,15 +513,7 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
         snprintf(errBuf, sizeof(errBuf), "OTA end err: %s", Update.errorString());
         setStatus(errBuf);
         Serial.printf("[OTA] Update.end failed: %s\n", Update.errorString());
-        if (m_matrix) {
-            if (!isPoweredOn()) {
-                m_matrix->clear(true);
-                FastLED.clear(true);
-                FastLED.show();
-            } else {
-                m_matrix->showOtaProgress(_progress, false, true);
-            }
-        }
+        if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
         downloadHttp.end();
         downloadClient.stop();
         return;
@@ -551,28 +524,16 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
 
     if (Update.isFinished()) {
         _progress = 100;
-        if (m_matrix) {
-            if (!isPoweredOn()) {
-                m_matrix->clear(true);
-                FastLED.clear(true);
-                FastLED.show();
-            } else {
-                m_matrix->showOtaProgress(100, true, false);
-            }
+        if (m_effectMgr) {
+            m_effectMgr->setOtaState(EffectManager::OTA_STATE_SUCCESS, 100);
         }
         setStatus("Update complete! Rebooting...");
         Serial.println(F("[OTA] Firmware successfully installed. Rebooting ESP32..."));
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(1400));
         ESP.restart();
     } else {
-        if (m_matrix) {
-            if (!isPoweredOn()) {
-                m_matrix->clear(true);
-                FastLED.clear(true);
-                FastLED.show();
-            } else {
-                m_matrix->showOtaProgress(_progress, false, true);
-            }
+        if (m_effectMgr) {
+            m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
         }
         setStatus("Update not finished");
         Serial.println(F("[OTA] Error: Update.isFinished() returned false."));

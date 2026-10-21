@@ -159,12 +159,8 @@ void loop() {
     zigbeeManager.update(&wifiManager, &effectManager, &ledMatrix, &otaGithub);
 
     // 7. Update active effect animation or OTA progress (~60 FPS)
-    if (otaGithub.isUpdating()) {
-        otaGithub.update(&ledMatrix);
-    } else {
-        effectManager.update(ledMatrix, imu, mic);
-        otaGithub.update(&ledMatrix);
-    }
+    effectManager.update(ledMatrix, imu, mic);
+    otaGithub.update(&ledMatrix);
 
     // 6. Telemetry: Print CPU temperature, network, IMU and Effect metrics every TEMP_PRINT_INTERVAL_MS
     if (currentMillis - lastTempPrintTime >= TEMP_PRINT_INTERVAL_MS) {

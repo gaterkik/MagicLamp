@@ -30,7 +30,10 @@ EffectManager::EffectManager()
       m_crossfading(false),
       m_crossfadeStartTime(0),
       m_curtainState(CurtainState::OPEN),
-      m_curtainStartTime(0) {
+      m_curtainStartTime(0),
+      m_otaState(OTA_STATE_IDLE),
+      m_otaProgress(0),
+      m_otaStateStartTime(0) {
     // Initialize default profiles for all 16 built-in effects
     for (int i = 0; i < NUM_CORE_EFFECTS; i++) {
         m_profiles[i].brightness = 128;
@@ -107,13 +110,25 @@ void EffectManager::begin(LedMatrix& matrix) {
     // 3. Load Dawn/Dusk schedule from "schedule" namespace
     Preferences schPrefs;
     schPrefs.begin("schedule", false);
-    m_schedule.enabled = schPrefs.getBool("en", false);
-    m_schedule.dawnHour = schPrefs.getUChar("dh", 7);
-    m_schedule.dawnMinute = schPrefs.getUChar("dm", 0);
-    m_schedule.dawnDurationMin = schPrefs.getUChar("dd", 10);
-    m_schedule.duskHour = schPrefs.getUChar("sh", 23);
-    m_schedule.duskMinute = schPrefs.getUChar("sm", 0);
+    if (schPrefs.isKey("dawn_en")) {
+        m_schedule.dawnEnabled = schPrefs.getBool("dawn_en", false);
+        m_schedule.dawnHour = schPrefs.getUChar("dawn_h", 7);
+        m_schedule.dawnMinute = schPrefs.getUChar("dawn_m", 0);
+        m_schedule.duskEnabled = schPrefs.getBool("dusk_en", false);
+        m_schedule.duskHour = schPrefs.getUChar("dusk_h", 23);
+        m_schedule.duskMinute = schPrefs.getUChar("dusk_m", 0);
+    } else {
+        bool oldEn = schPrefs.getBool("en", false);
+        m_schedule.dawnEnabled = oldEn;
+        m_schedule.dawnHour = schPrefs.getUChar("dh", 7);
+        m_schedule.dawnMinute = schPrefs.getUChar("dm", 0);
+        m_schedule.duskEnabled = oldEn;
+        m_schedule.duskHour = schPrefs.getUChar("sh", 23);
+        m_schedule.duskMinute = schPrefs.getUChar("sm", 0);
+    }
+    m_schedule.dawnDurationMin = schPrefs.getUChar("dd", 5);
     m_schedule.duskDurationMin = schPrefs.getUChar("sd", 30);
+    m_schedule.enabled = m_schedule.isEnabled();
     schPrefs.end();
 
     // Apply active effect's individual profile
@@ -167,6 +182,12 @@ void EffectManager::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2
 
     // Check automated Dawn/Dusk schedule
     updateSchedule(matrix);
+
+    // If OTA update/check is in progress, render OTA animation exclusively and block effects
+    if (m_otaState != OTA_STATE_IDLE) {
+        renderOta(matrix);
+        return;
+    }
 
     // Synchronize microphone sensitivity
     if (const_cast<MicI2S&>(mic).getSensitivity() != m_micSensitivity) {
@@ -551,21 +572,28 @@ void EffectManager::setCycleMask(uint16_t mask) {
 
 void EffectManager::setSchedule(const ScheduleConfig& cfg) {
     m_schedule = cfg;
+    m_schedule.enabled = m_schedule.isEnabled();
+
     Preferences schPrefs;
     schPrefs.begin("schedule", false);
+    schPrefs.putBool("dawn_en", m_schedule.dawnEnabled);
+    schPrefs.putUChar("dawn_h", m_schedule.dawnHour);
+    schPrefs.putUChar("dawn_m", m_schedule.dawnMinute);
+    schPrefs.putBool("dusk_en", m_schedule.duskEnabled);
+    schPrefs.putUChar("dusk_h", m_schedule.duskHour);
+    schPrefs.putUChar("dusk_m", m_schedule.duskMinute);
+    schPrefs.putUChar("dd", m_schedule.dawnDurationMin);
+    schPrefs.putUChar("sd", m_schedule.duskDurationMin);
     schPrefs.putBool("en", m_schedule.enabled);
     schPrefs.putUChar("dh", m_schedule.dawnHour);
     schPrefs.putUChar("dm", m_schedule.dawnMinute);
-    schPrefs.putUChar("dd", m_schedule.dawnDurationMin);
     schPrefs.putUChar("sh", m_schedule.duskHour);
     schPrefs.putUChar("sm", m_schedule.duskMinute);
-    schPrefs.putUChar("sd", m_schedule.duskDurationMin);
     schPrefs.end();
 
-    Serial.printf("[Schedule] Saved: Enabled=%s, Dawn=%02d:%02d (%d min), Dusk=%02d:%02d (%d min)\n",
-                  m_schedule.enabled ? "YES" : "NO",
-                  m_schedule.dawnHour, m_schedule.dawnMinute, m_schedule.dawnDurationMin,
-                  m_schedule.duskHour, m_schedule.duskMinute, m_schedule.duskDurationMin);
+    Serial.printf("[Schedule] Saved: Dawn=%02d:%02d (en=%s, %d min), Dusk=%02d:%02d (en=%s, %d min)\n",
+                  m_schedule.dawnHour, m_schedule.dawnMinute, m_schedule.dawnEnabled ? "YES" : "NO", m_schedule.dawnDurationMin,
+                  m_schedule.duskHour, m_schedule.duskMinute, m_schedule.duskEnabled ? "YES" : "NO", m_schedule.duskDurationMin);
 }
 
 void EffectManager::markProfilesDirty() {
@@ -587,7 +615,7 @@ void EffectManager::updateProfilesNvs() {
 }
 
 void EffectManager::updateSchedule(LedMatrix& matrix) {
-    if (!m_schedule.enabled) return;
+    if (!m_schedule.isEnabled()) return;
 
     uint32_t now = millis();
     if (now - m_lastScheduleCheckTime < 1000) return;
@@ -603,39 +631,202 @@ void EffectManager::updateSchedule(LedMatrix& matrix) {
 
     int curSecOfDay = ti->tm_hour * 3600 + ti->tm_min * 60 + ti->tm_sec;
 
-    // Dawn window
-    int dawnTargetMin = m_schedule.dawnHour * 60 + m_schedule.dawnMinute;
-    int dawnDurSec = (m_schedule.dawnDurationMin > 0 ? m_schedule.dawnDurationMin : 10) * 60;
-    int dawnTargetSec = dawnTargetMin * 60;
-    int dawnStartSec = (dawnTargetSec >= dawnDurSec) ? (dawnTargetSec - dawnDurSec) : (86400 + dawnTargetSec - dawnDurSec);
+    // 1. Dawn Alarm (Wake-up)
+    if (m_schedule.dawnEnabled) {
+        int dawnTargetMin = m_schedule.dawnHour * 60 + m_schedule.dawnMinute;
+        int dawnDurSec = (m_schedule.dawnDurationMin > 0 ? m_schedule.dawnDurationMin : 5) * 60; // 5 min ramp
+        int dawnTargetSec = dawnTargetMin * 60;
+        int dawnStartSec = (dawnTargetSec >= dawnDurSec) ? (dawnTargetSec - dawnDurSec) : (86400 + dawnTargetSec - dawnDurSec);
 
-    bool inDawn = false;
-    if (dawnStartSec <= dawnTargetSec) {
-        if (curSecOfDay >= dawnStartSec && curSecOfDay <= dawnTargetSec) inDawn = true;
-    } else {
-        if (curSecOfDay >= dawnStartSec || curSecOfDay <= dawnTargetSec) inDawn = true;
-    }
+        bool inDawn = false;
+        if (dawnStartSec <= dawnTargetSec) {
+            if (curSecOfDay >= dawnStartSec && curSecOfDay <= dawnTargetSec) inDawn = true;
+        } else {
+            if (curSecOfDay >= dawnStartSec || curSecOfDay <= dawnTargetSec) inDawn = true;
+        }
 
-    // Dusk window
-    int duskStartMin = m_schedule.duskHour * 60 + m_schedule.duskMinute;
-    int duskDurSec = (m_schedule.duskDurationMin > 0 ? m_schedule.duskDurationMin : 30) * 60;
-    int duskStartSec = duskStartMin * 60;
-
-    // Wake up if dawn window starts and lamp is off
-    if (inDawn && !m_powerState) {
-        Serial.println(F("[Schedule] Dawn sunrise triggered: turning ON lamp and starting DawnDusk effect."));
-        powerOn();
-        if (m_currentEffectIndex != 1) {
-            setEffect(1, matrix);
+        // 5 minutes before alarm time: turn ON lamp from any state and start Dawn mode
+        if (inDawn) {
+            if (!m_powerState) {
+                Serial.println(F("[Schedule] Dawn alarm triggered: turning ON lamp in Dawn mode."));
+                powerOn();
+            }
+            if (m_currentEffectIndex != 1) {
+                setEffect(1, matrix);
+            }
         }
     }
 
-    // Sleep if dusk window ends and lamp is on in DawnDusk effect
-    if (m_powerState && m_currentEffectIndex == 1) {
-        if (curSecOfDay >= (duskStartSec + duskDurSec - 2) && curSecOfDay <= (duskStartSec + duskDurSec + 2)) {
-            Serial.println(F("[Schedule] Dusk sunset ended: turning OFF lamp."));
-            powerOff();
+    // 2. Dusk Sleep Timer
+    if (m_schedule.duskEnabled) {
+        int duskStartMin = m_schedule.duskHour * 60 + m_schedule.duskMinute;
+        int duskDurSec = (m_schedule.duskDurationMin > 0 ? m_schedule.duskDurationMin : 30) * 60; // 30 min amber fade
+        int duskStartSec = duskStartMin * 60;
+        int duskEndSec = (duskStartSec + duskDurSec) % 86400;
+
+        bool inDusk = false;
+        if (duskStartSec <= (duskStartSec + duskDurSec) && (duskStartSec + duskDurSec) < 86400) {
+            if (curSecOfDay >= duskStartSec && curSecOfDay < (duskStartSec + duskDurSec)) inDusk = true;
+        } else {
+            if (curSecOfDay >= duskStartSec || curSecOfDay < duskEndSec) inDusk = true;
         }
+
+        // In dusk window: regardless of active effect, switch to safe 1900K amber mode (DawnDusk effect index 1)
+        if (inDusk && m_powerState) {
+            if (m_currentEffectIndex != 1) {
+                Serial.println(F("[Schedule] Dusk sleep timer: switching to 1900K amber sleep mode."));
+                setEffect(1, matrix);
+            }
+        }
+
+        // End of 30-min dusk window: turn OFF lamp completely
+        if (m_powerState && m_currentEffectIndex == 1) {
+            int endCheckSec = (duskStartSec + duskDurSec) % 86400;
+            if (abs(curSecOfDay - endCheckSec) <= 2) {
+                Serial.println(F("[Schedule] Dusk 30-min fade complete: turning OFF lamp."));
+                powerOff();
+            }
+        }
+    }
+}
+
+void EffectManager::setOtaState(OtaState state, uint8_t progress) {
+    if (m_otaState != state) {
+        m_otaState = state;
+        m_otaStateStartTime = millis();
+        Serial.printf("[OTA] State changed to %d (progress=%d%%)\n", static_cast<int>(state), progress);
+    }
+    m_otaProgress = progress;
+}
+
+void EffectManager::renderOta(LedMatrix& matrix) {
+    if (m_otaState == OTA_STATE_IDLE) {
+        return;
+    }
+
+    uint32_t now = millis();
+    uint32_t elapsed = now - m_otaStateStartTime;
+
+    // Stealth Mode: if lamp is powered off, matrix remains completely black
+    if (!isPoweredOn()) {
+        matrix.clear(false);
+        matrix.show();
+        if ((m_otaState == OTA_STATE_UP_TO_DATE || m_otaState == OTA_STATE_ERROR) && elapsed >= 1200) {
+            m_otaState = OTA_STATE_IDLE;
+        } else if (m_otaState == OTA_STATE_SUCCESS && elapsed >= 1200) {
+            matrix.clear(true);
+            ESP.restart();
+        }
+        return;
+    }
+
+    // Lamp is ON: render visual indicator according to OTA state
+    switch (m_otaState) {
+        case OTA_STATE_CHECKING: {
+            matrix.clear(false);
+            // Fast rotating bright white-blue radar dot on top ring Y=15
+            uint8_t radarX = static_cast<uint8_t>((now / 40) % MATRIX_WIDTH);
+            matrix.setPixel(radarX, MATRIX_HEIGHT - 1, CRGB(220, 245, 255));
+            matrix.setPixel((radarX + MATRIX_WIDTH - 1) % MATRIX_WIDTH, MATRIX_HEIGHT - 1, CRGB(80, 160, 240));
+            matrix.setPixel((radarX + MATRIX_WIDTH - 2) % MATRIX_WIDTH, MATRIX_HEIGHT - 1, CRGB(20, 70, 150));
+            matrix.show();
+            break;
+        }
+
+        case OTA_STATE_UP_TO_DATE: {
+            if (elapsed >= 1200) {
+                m_otaState = OTA_STATE_IDLE;
+                return;
+            }
+            matrix.clear(false);
+            // Two top rings Y=14..15 double-pulse smoothly in emerald green over 1.2s
+            float phase = static_cast<float>(elapsed % 600) / 600.0f;
+            float pulse = sinf(phase * 3.14159265f);
+            uint8_t scale = static_cast<uint8_t>(pulse * 255.0f);
+            CRGB emCol = CRGB(0, 230, 90);
+            emCol.nscale8_video(scale);
+            for (int y = 14; y <= 15; y++) {
+                for (int x = 0; x < MATRIX_WIDTH; x++) {
+                    matrix.setPixel(x, y, emCol);
+                }
+            }
+            matrix.show();
+            break;
+        }
+
+        case OTA_STATE_DOWNLOADING: {
+            matrix.clear(false);
+            uint8_t pct = m_otaProgress;
+            if (pct > 100) pct = 100;
+            float fillHeight = (static_cast<float>(pct) / 100.0f) * static_cast<float>(MATRIX_HEIGHT);
+            uint8_t pulse = sin8(static_cast<uint8_t>(now / 4));
+            float pulseFactor = 0.5f + 0.5f * (static_cast<float>(pulse) / 255.0f);
+
+            for (int y = 0; y < MATRIX_HEIGHT; y++) {
+                float fy = static_cast<float>(y);
+                CRGB rowColor = CRGB::Black;
+                if (fy < fillHeight - 1.0f) {
+                    rowColor = CRGB(0, 140, 240); // Soft cyan/turquoise-blue
+                } else if (fy <= fillHeight) {
+                    float edgeAlpha = fillHeight - fy;
+                    rowColor = CRGB(0, static_cast<uint8_t>(180.0f * pulseFactor * edgeAlpha),
+                                       static_cast<uint8_t>(255.0f * pulseFactor * edgeAlpha));
+                } else {
+                    rowColor = CRGB::Black;
+                }
+                for (int x = 0; x < MATRIX_WIDTH; x++) {
+                    matrix.setPixel(x, y, rowColor);
+                }
+            }
+            matrix.show();
+            break;
+        }
+
+        case OTA_STATE_SUCCESS: {
+            if (elapsed >= 1200) {
+                matrix.clear(true);
+                ESP.restart();
+                return;
+            }
+            matrix.clear(false);
+            // 1.2-second emerald-green wave across the whole cylinder
+            float phase = static_cast<float>(elapsed) / 1200.0f;
+            float waveCenter = phase * 18.0f;
+            for (int y = 0; y < MATRIX_HEIGHT; y++) {
+                float dist = fabsf(static_cast<float>(y) - waveCenter);
+                float bright = fmaxf(0.12f, 1.0f - dist * 0.28f);
+                CRGB col = CRGB(0, static_cast<uint8_t>(bright * 255), static_cast<uint8_t>(bright * 120));
+                for (int x = 0; x < MATRIX_WIDTH; x++) {
+                    matrix.setPixel(x, y, col);
+                }
+            }
+            matrix.show();
+            break;
+        }
+
+        case OTA_STATE_ERROR: {
+            if (elapsed >= 1200) {
+                m_otaState = OTA_STATE_IDLE;
+                return;
+            }
+            matrix.clear(false);
+            // Two top rings Y=14..15 double-pulse in red-orange
+            float phase = static_cast<float>(elapsed % 600) / 600.0f;
+            float pulse = sinf(phase * 3.14159265f);
+            uint8_t scale = static_cast<uint8_t>(pulse * 255.0f);
+            CRGB errCol = CRGB(255, 60, 0);
+            errCol.nscale8_video(scale);
+            for (int y = 14; y <= 15; y++) {
+                for (int x = 0; x < MATRIX_WIDTH; x++) {
+                    matrix.setPixel(x, y, errCol);
+                }
+            }
+            matrix.show();
+            break;
+        }
+
+        default:
+            break;
     }
 }
 

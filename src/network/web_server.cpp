@@ -182,53 +182,43 @@ void LampWebServer::registerRoutes() {
         }
     }, [this]() {
         HTTPUpload& upload = m_server.upload();
-        bool isPowered = m_effectMgr ? m_effectMgr->isPoweredOn() : true;
 
         if (upload.status == UPLOAD_FILE_START) {
             Serial.printf("[WebOTA] Update started: %s\n", upload.filename.c_str());
-            if (m_matrix) {
-                m_matrix->clear(true);
+            if (m_effectMgr) {
+                m_effectMgr->setOtaState(EffectManager::OTA_STATE_DOWNLOADING, 0);
             }
-            Update.onProgress([this, isPowered](size_t progress, size_t total) {
-                if (m_matrix && total > 0) {
-                    if (!isPowered) {
-                        m_matrix->clear(true);
-                        FastLED.clear(true);
-                        FastLED.show();
-                    } else {
-                        uint8_t pct = (progress * 100) / total;
-                        m_matrix->showOtaProgress(pct, false, false);
-                    }
+            Update.onProgress([this](size_t progress, size_t total) {
+                if (m_effectMgr && total > 0) {
+                    uint8_t pct = (progress * 100) / total;
+                    m_effectMgr->setOtaState(EffectManager::OTA_STATE_DOWNLOADING, pct);
                 }
+                yield();
             });
             if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
                 Update.printError(Serial);
-                if (m_matrix && isPowered) m_matrix->showOtaProgress(0, false, true);
+                if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
             }
         } else if (upload.status == UPLOAD_FILE_WRITE) {
+            yield();
             if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
                 Update.printError(Serial);
-                if (m_matrix && isPowered) m_matrix->showOtaProgress(0, false, true);
+                if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
             }
+            yield();
         } else if (upload.status == UPLOAD_FILE_END) {
             if (Update.end(true)) {
                 Serial.printf("[WebOTA] Success: %u bytes written. Reboot pending.\n", upload.totalSize);
-                if (m_matrix) {
-                    if (!isPowered) {
-                        m_matrix->clear(true);
-                        FastLED.clear(true);
-                        FastLED.show();
-                    } else {
-                        m_matrix->showOtaProgress(100, true, false);
-                    }
+                if (m_effectMgr) {
+                    m_effectMgr->setOtaState(EffectManager::OTA_STATE_SUCCESS, 100);
                 }
             } else {
                 Update.printError(Serial);
-                if (m_matrix && isPowered) m_matrix->showOtaProgress(0, false, true);
+                if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
             }
         } else if (upload.status == UPLOAD_FILE_ABORTED) {
             Update.end();
-            if (m_matrix && isPowered) m_matrix->showOtaProgress(0, false, true);
+            if (m_effectMgr) m_effectMgr->setOtaState(EffectManager::OTA_STATE_ERROR);
             Serial.println(F("[WebOTA] Update aborted."));
         }
     });
@@ -321,7 +311,9 @@ void LampWebServer::handleStatus() {
                      ",\"radio_mode\":\"" + String(radioMode) + "\"" +
                      ",\"cycle_mask\":" + String(cycleMask) +
                      ",\"time\":\"" + formattedTime + "\"" +
-                     ",\"scheduleEnabled\":" + String(sch.enabled ? "true" : "false") +
+                     ",\"scheduleEnabled\":" + String(sch.isEnabled() ? "true" : "false") +
+                     ",\"dawnEnabled\":" + String(sch.dawnEnabled ? "true" : "false") +
+                     ",\"duskEnabled\":" + String(sch.duskEnabled ? "true" : "false") +
                      ",\"dawnTime\":\"" + String(dawnBuf) + "\"" +
                      ",\"duskTime\":\"" + String(duskBuf) + "\"" +
                      ",\"dawnHour\":" + String(sch.dawnHour) +
@@ -456,8 +448,18 @@ void LampWebServer::handleControl() {
         ScheduleConfig sch = m_effectMgr->getSchedule();
         bool scheduleChanged = false;
 
-        bool schEn = false;
+        bool dawnEn = false, duskEn = false, schEn = false;
+        if (getBoolParam(m_server, body, "dawnEnabled", dawnEn)) {
+            sch.dawnEnabled = dawnEn;
+            scheduleChanged = true;
+        }
+        if (getBoolParam(m_server, body, "duskEnabled", duskEn)) {
+            sch.duskEnabled = duskEn;
+            scheduleChanged = true;
+        }
         if (getBoolParam(m_server, body, "scheduleEnabled", schEn)) {
+            sch.dawnEnabled = schEn;
+            sch.duskEnabled = schEn;
             sch.enabled = schEn;
             scheduleChanged = true;
         }

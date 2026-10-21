@@ -78,95 +78,101 @@ void EffectDawnDusk::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI
     bool validTime = (rawtime > 100000);
 
     // 1. Check schedule if active and system time is synchronized
-    if (validTime && m_schedule && m_schedule->enabled) {
+    if (validTime && m_schedule && m_schedule->isEnabled()) {
         time_t localTime = rawtime + TIMEZONE_OFFSET_SEC;
         struct tm* timeinfo = gmtime(&localTime);
         if (timeinfo) {
             int curSecOfDay = timeinfo->tm_hour * 3600 + timeinfo->tm_min * 60 + timeinfo->tm_sec;
 
-            // Dawn window
-            int dawnTargetMin = m_schedule->dawnHour * 60 + m_schedule->dawnMinute;
-            int dawnDurSec = (m_schedule->dawnDurationMin > 0 ? m_schedule->dawnDurationMin : 10) * 60;
-            int dawnTargetSec = dawnTargetMin * 60;
-            int dawnStartSec = (dawnTargetSec >= dawnDurSec) ? (dawnTargetSec - dawnDurSec) : (86400 + dawnTargetSec - dawnDurSec);
+            // Dawn window (5 min wake-up ramp before dawn target time)
+            if (m_schedule->dawnEnabled) {
+                int dawnTargetMin = m_schedule->dawnHour * 60 + m_schedule->dawnMinute;
+                int dawnDurSec = (m_schedule->dawnDurationMin > 0 ? m_schedule->dawnDurationMin : 5) * 60;
+                int dawnTargetSec = dawnTargetMin * 60;
+                int dawnStartSec = (dawnTargetSec >= dawnDurSec) ? (dawnTargetSec - dawnDurSec) : (86400 + dawnTargetSec - dawnDurSec);
 
-            bool inDawn = false;
-            float dawnProgress = 0.0f;
-            if (dawnStartSec <= dawnTargetSec) {
-                if (curSecOfDay >= dawnStartSec && curSecOfDay <= dawnTargetSec) {
-                    inDawn = true;
-                    dawnProgress = static_cast<float>(curSecOfDay - dawnStartSec) / static_cast<float>(dawnDurSec);
+                bool inDawn = false;
+                float dawnProgress = 0.0f;
+                if (dawnStartSec <= dawnTargetSec) {
+                    if (curSecOfDay >= dawnStartSec && curSecOfDay <= dawnTargetSec) {
+                        inDawn = true;
+                        dawnProgress = static_cast<float>(curSecOfDay - dawnStartSec) / static_cast<float>(dawnDurSec);
+                    }
+                } else {
+                    if (curSecOfDay >= dawnStartSec || curSecOfDay <= dawnTargetSec) {
+                        inDawn = true;
+                        int elapsed = (curSecOfDay >= dawnStartSec) ? (curSecOfDay - dawnStartSec) : (86400 - dawnStartSec + curSecOfDay);
+                        dawnProgress = static_cast<float>(elapsed) / static_cast<float>(dawnDurSec);
+                    }
                 }
-            } else {
-                if (curSecOfDay >= dawnStartSec || curSecOfDay <= dawnTargetSec) {
-                    inDawn = true;
-                    int elapsed = (curSecOfDay >= dawnStartSec) ? (curSecOfDay - dawnStartSec) : (86400 - dawnStartSec + curSecOfDay);
-                    dawnProgress = static_cast<float>(elapsed) / static_cast<float>(dawnDurSec);
+
+                if (inDawn) {
+                    // Dawn sunrise: smooth brightness rise from morning embers to warm sun
+                    dawnProgress = constrain(dawnProgress, 0.0f, 1.0f);
+                    for (int y = 0; y < MATRIX_HEIGHT; y++) {
+                        float relY = static_cast<float>(y) / static_cast<float>(MATRIX_HEIGHT - 1);
+                        float horizonDist = fabsf(relY - dawnProgress * 0.85f);
+                        uint8_t warmIntensity = static_cast<uint8_t>(fmaxf(0.0f, (1.0f - horizonDist * 1.6f) * 255.0f));
+
+                        CRGB horizonColor = blend(CRGB(50, 8, 2), CRGB(255, 175, 45), static_cast<uint8_t>(dawnProgress * 255.0f));
+                        CRGB upperColor = blend(CRGB(2, 4, 18), CRGB(100, 160, 240), static_cast<uint8_t>(dawnProgress * 255.0f));
+                        CRGB col = blend(upperColor, horizonColor, warmIntensity);
+
+                        // Fade in overall brightness from dark amber to full
+                        uint8_t masterScale = static_cast<uint8_t>(25 + dawnProgress * 230.0f);
+                        col.nscale8_video(masterScale);
+
+                        for (int x = 0; x < MATRIX_WIDTH; x++) {
+                            matrix.setPixel(x, y, col);
+                        }
+                    }
+                    return;
                 }
             }
 
-            // Dusk window
-            int duskStartMin = m_schedule->duskHour * 60 + m_schedule->duskMinute;
-            int duskDurSec = (m_schedule->duskDurationMin > 0 ? m_schedule->duskDurationMin : 30) * 60;
-            int duskStartSec = duskStartMin * 60;
-            int duskEndSec = (duskStartSec + duskDurSec) % 86400;
+            // Dusk window (30 min safe 1900K amber fade out)
+            if (m_schedule->duskEnabled) {
+                int duskStartMin = m_schedule->duskHour * 60 + m_schedule->duskMinute;
+                int duskDurSec = (m_schedule->duskDurationMin > 0 ? m_schedule->duskDurationMin : 30) * 60;
+                int duskStartSec = duskStartMin * 60;
+                int duskEndSec = (duskStartSec + duskDurSec) % 86400;
 
-            bool inDusk = false;
-            float duskProgress = 0.0f;
-            if (duskStartSec <= (duskStartSec + duskDurSec) && (duskStartSec + duskDurSec) < 86400) {
-                if (curSecOfDay >= duskStartSec && curSecOfDay <= duskStartSec + duskDurSec) {
-                    inDusk = true;
-                    duskProgress = static_cast<float>(curSecOfDay - duskStartSec) / static_cast<float>(duskDurSec);
-                }
-            } else {
-                if (curSecOfDay >= duskStartSec || curSecOfDay <= duskEndSec) {
-                    inDusk = true;
-                    int elapsed = (curSecOfDay >= duskStartSec) ? (curSecOfDay - duskStartSec) : (86400 - duskStartSec + curSecOfDay);
-                    duskProgress = static_cast<float>(elapsed) / static_cast<float>(duskDurSec);
-                }
-            }
-
-            if (inDawn) {
-                // Dawn sunrise: smooth brightness rise from dark amber to warm sun
-                dawnProgress = constrain(dawnProgress, 0.0f, 1.0f);
-                for (int y = 0; y < MATRIX_HEIGHT; y++) {
-                    float relY = static_cast<float>(y) / static_cast<float>(MATRIX_HEIGHT - 1);
-                    float horizonDist = fabsf(relY - dawnProgress * 0.85f);
-                    uint8_t warmIntensity = static_cast<uint8_t>(fmaxf(0.0f, (1.0f - horizonDist * 1.6f) * 255.0f));
-
-                    CRGB horizonColor = blend(CRGB(50, 8, 2), CRGB(255, 175, 45), static_cast<uint8_t>(dawnProgress * 255.0f));
-                    CRGB upperColor = blend(CRGB(2, 4, 18), CRGB(100, 160, 240), static_cast<uint8_t>(dawnProgress * 255.0f));
-                    CRGB col = blend(upperColor, horizonColor, warmIntensity);
-
-                    // Fade in overall brightness from dark amber to full
-                    uint8_t masterScale = static_cast<uint8_t>(25 + dawnProgress * 230.0f);
-                    col.nscale8_video(masterScale);
-
-                    for (int x = 0; x < MATRIX_WIDTH; x++) {
-                        matrix.setPixel(x, y, col);
+                bool inDusk = false;
+                float duskProgress = 0.0f;
+                if (duskStartSec <= (duskStartSec + duskDurSec) && (duskStartSec + duskDurSec) < 86400) {
+                    if (curSecOfDay >= duskStartSec && curSecOfDay <= duskStartSec + duskDurSec) {
+                        inDusk = true;
+                        duskProgress = static_cast<float>(curSecOfDay - duskStartSec) / static_cast<float>(duskDurSec);
+                    }
+                } else {
+                    if (curSecOfDay >= duskStartSec || curSecOfDay <= duskEndSec) {
+                        inDusk = true;
+                        int elapsed = (curSecOfDay >= duskStartSec) ? (curSecOfDay - duskStartSec) : (86400 - duskStartSec + curSecOfDay);
+                        duskProgress = static_cast<float>(elapsed) / static_cast<float>(duskDurSec);
                     }
                 }
-                return;
-            } else if (inDusk) {
-                // Dusk: Отбой strictly eliminates blue/violet spectrum (B = 0 on entire fade out!)
-                // Warm amber candle spectrum CRGB(r, g, 0) with g = r * 0.28 (~1900K, melatonin-safe)
-                duskProgress = constrain(duskProgress, 0.0f, 1.0f);
-                float duskBriFactor = 1.0f - duskProgress; // 1.0 down to 0.0
-                uint8_t briScale = static_cast<uint8_t>(duskBriFactor * 255.0f);
 
-                for (int y = 0; y < MATRIX_HEIGHT; y++) {
-                    float relY = static_cast<float>(y) / static_cast<float>(MATRIX_HEIGHT - 1);
-                    float rowFactor = 0.5f + 0.5f * (1.0f - relY * 0.7f);
-                    uint8_t r = static_cast<uint8_t>(255.0f * rowFactor);
-                    uint8_t g = static_cast<uint8_t>(static_cast<float>(r) * 0.28f);
-                    CRGB duskColor(r, g, 0);
-                    duskColor.nscale8_video(briScale);
+                if (inDusk) {
+                    // Dusk: Отбой strictly eliminates blue/violet spectrum (B = 0 on entire fade out!)
+                    // Warm amber candle spectrum CRGB(r, g, 0) with g = r * 0.28 (~1900K, melatonin-safe)
+                    duskProgress = constrain(duskProgress, 0.0f, 1.0f);
+                    float duskBriFactor = 1.0f - duskProgress; // 1.0 down to 0.0
+                    uint8_t briScale = static_cast<uint8_t>(duskBriFactor * 255.0f);
 
-                    for (int x = 0; x < MATRIX_WIDTH; x++) {
-                        matrix.setPixel(x, y, duskColor);
+                    for (int y = 0; y < MATRIX_HEIGHT; y++) {
+                        float relY = static_cast<float>(y) / static_cast<float>(MATRIX_HEIGHT - 1);
+                        float rowFactor = 0.5f + 0.5f * (1.0f - relY * 0.7f);
+                        uint8_t r = static_cast<uint8_t>(255.0f * rowFactor);
+                        uint8_t g = static_cast<uint8_t>(static_cast<float>(r) * 0.28f);
+                        CRGB duskColor(r, g, 0); // Strictly B = 0!
+                        duskColor.nscale8_video(briScale);
+
+                        for (int x = 0; x < MATRIX_WIDTH; x++) {
+                            matrix.setPixel(x, y, duskColor);
+                        }
                     }
+                    return;
                 }
-                return;
             }
         }
     }

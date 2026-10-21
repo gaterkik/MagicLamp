@@ -103,13 +103,18 @@ struct EffectProfile {
 };
 
 struct ScheduleConfig {
-    bool enabled = false;
+    bool dawnEnabled = false;
     uint8_t dawnHour = 7;
     uint8_t dawnMinute = 0;
-    uint8_t dawnDurationMin = 10; // 5-15 min (default: 10)
+    uint8_t dawnDurationMin = 5; // 5 min wake-up ramp before dawn target time
+
+    bool duskEnabled = false;
     uint8_t duskHour = 23;
     uint8_t duskMinute = 0;
-    uint8_t duskDurationMin = 30; // 30 min
+    uint8_t duskDurationMin = 30; // 30 min amber sleep fade to black
+
+    bool enabled = false; // Backward-compatibility
+    bool isEnabled() const { return dawnEnabled || duskEnabled || enabled; }
 };
 
 enum class CurtainState : uint8_t {
@@ -303,6 +308,33 @@ public:
     void setSchedule(const ScheduleConfig& cfg);
 
     /**
+     * @brief Thread-safe OTA states for non-blocking matrix rendering.
+     */
+    enum OtaState : uint8_t {
+        OTA_STATE_IDLE = 0,
+        OTA_STATE_CHECKING,
+        OTA_STATE_DOWNLOADING,
+        OTA_STATE_UP_TO_DATE,
+        OTA_STATE_SUCCESS,
+        OTA_STATE_ERROR
+    };
+
+    /**
+     * @brief Thread-safe update of OTA state and progress from background tasks.
+     */
+    void setOtaState(OtaState state, uint8_t progress = 0);
+
+    /**
+     * @brief Get current OTA state.
+     */
+    OtaState getOtaState() const { return m_otaState; }
+
+    /**
+     * @brief Get current OTA progress (0..100%).
+     */
+    uint8_t getOtaProgress() const { return m_otaProgress; }
+
+    /**
      * @brief Get current power curtain state.
      */
     CurtainState getCurtainState() const { return m_curtainState; }
@@ -315,6 +347,11 @@ private:
     void updateSchedule(LedMatrix& matrix);
     void applyCurtain(LedMatrix& matrix);
     void renderLimitFlash(LedMatrix& matrix);
+    void renderOta(LedMatrix& matrix);
+
+    volatile OtaState m_otaState;
+    volatile uint8_t m_otaProgress;
+    uint32_t m_otaStateStartTime;
 
     Preferences m_prefs;
     bool m_powerState;

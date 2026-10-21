@@ -669,7 +669,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="logo-icon">&#9733;</div>
         <div>
           <h1>MagicLamp</h1>
-          <div style="font-size:0.75rem; color:var(--text-muted);">ESP32-C6 Interactive Light v0.8.0</div>
+          <div style="font-size:0.75rem; color:var(--text-muted);">ESP32-C6 Interactive Light v0.8.1</div>
         </div>
       </div>
       <div class="header-badges">
@@ -717,6 +717,44 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <span id="radio-btn-icon">&#128246;</span>
           <span id="radio-btn-text">Переключить на Zigbee</span>
         </button>
+      </div>
+    </section>
+
+    <!-- GLOBAL INDEPENDENT SCHEDULE: DAWN & DUSK -->
+    <section class="card">
+      <div class="card-title">
+        <span>&#9200; Будильник Рассвет и Таймер Отбой</span>
+        <span style="font-size:0.76rem; font-weight:normal; color:var(--text-muted);">NTP синхронизация (GMT+2)</span>
+      </div>
+
+      <div class="sched-grid">
+        <!-- Рассвет -->
+        <div class="sched-item">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div class="sched-label" style="margin-bottom:0; font-weight:600; color:var(--text);">&#127749; Рассвет (Будильник)</div>
+            <button id="btn-dawn-toggle" class="power-btn" style="padding:4px 12px; font-size:0.75rem;" onclick="toggleDawn(event)">
+              <span id="dawn-status-text">ВЫКЛ</span>
+            </button>
+          </div>
+          <input type="time" id="sched-dawn-time" value="07:00" onchange="saveScheduleTimes()">
+          <div style="font-size:0.72rem; color:var(--text-muted); margin-top:5px;">
+            Включает лампу из любого режима за 5 минут до времени и плавно разгорается от углей до теплого солнца
+          </div>
+        </div>
+
+        <!-- Отбой -->
+        <div class="sched-item">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div class="sched-label" style="margin-bottom:0; font-weight:600; color:var(--text);">&#127769; Отбой (Таймер сна)</div>
+            <button id="btn-dusk-toggle" class="power-btn" style="padding:4px 12px; font-size:0.75rem;" onclick="toggleDusk(event)">
+              <span id="dusk-status-text">ВЫКЛ</span>
+            </button>
+          </div>
+          <input type="time" id="sched-dusk-time" value="23:00" onchange="saveScheduleTimes()">
+          <div style="font-size:0.72rem; color:var(--text-muted); margin-top:5px;">
+            Переключает любой эффект в янтарный свет 1900K (B = 0) и плавно гасит за 30 мин до полного выключения
+          </div>
+        </div>
       </div>
     </section>
 
@@ -846,7 +884,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // 16 built-in native effects metadata
     const EFFECTS_META = [
       { id: 0, name: "Ночник", sub: "Nightlight (2700K)", icon: "🌙", dynamic: false, audio: false, schedule: false },
-      { id: 1, name: "Рассвет / Закат", sub: "Dawn / Dusk (1900K amber)", icon: "🌅", dynamic: false, audio: false, schedule: true },
+      { id: 1, name: "Рассвет / Закат", sub: "Dawn / Dusk (1900K amber)", icon: "🌅", dynamic: false, audio: false, schedule: false },
       { id: 2, name: "Костер", sub: "Fire Simulation 3D", icon: "🔥", dynamic: true, audio: false, schedule: false },
       { id: 3, name: "Шум Перлина", sub: "Perlin Noise 3D", icon: "🌊", dynamic: true, audio: false, schedule: false },
       { id: 4, name: "Игра «Жизнь»", sub: "Conway's Cellular Automata", icon: "🧬", dynamic: true, audio: false, schedule: false },
@@ -946,35 +984,6 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <input type="range" id="slider-mic-${eff.id}" min="1" max="255" value="128"
                      oninput="onMicInput(${eff.id}, this.value)"
                      onchange="onMicChange(${eff.id}, this.value)">
-            </div>
-          `;
-        }
-
-        // 4. Schedule Box (ONLY inside Dawn/Dusk #1)
-        if (eff.schedule) {
-          dynamicControls += `
-            <div class="schedule-box">
-              <div class="sched-header">
-                <div>
-                  <div style="font-weight:600; font-size:0.9rem;">&#9200; Расписание будильника и сна</div>
-                  <div style="font-size:0.75rem; color:var(--text-muted);">Рассвет утром и янтарный сон вечером</div>
-                </div>
-                <button id="btn-sched-toggle" class="power-btn" style="padding:5px 14px; font-size:0.8rem;" onclick="toggleSchedule(event)">
-                  <span id="sched-status-text">ВЫКЛ</span>
-                </button>
-              </div>
-              <div class="sched-grid">
-                <div class="sched-item">
-                  <div class="sched-label">&#127749; Рассвет (Будильник)</div>
-                  <input type="time" id="sched-dawn-time" value="07:00" onchange="saveScheduleTimes()">
-                  <div style="font-size:0.7rem; color:var(--text-muted); margin-top:3px;">Плавный подъем 10 мин</div>
-                </div>
-                <div class="sched-item">
-                  <div class="sched-label">&#127769; Отбой (Сон 1900K)</div>
-                  <input type="time" id="sched-dusk-time" value="23:00" onchange="saveScheduleTimes()">
-                  <div style="font-size:0.7rem; color:var(--text-muted); margin-top:3px;">Янтарный закат 30 мин</div>
-                </div>
-              </div>
             </div>
           `;
         }
@@ -1087,26 +1096,41 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       sendControl({ effect: id, param1: v, colorTemp: v });
     }
 
-    // Schedule actions
-    function toggleSchedule(e) {
+    // Schedule actions (Independent Dawn Alarm and Dusk Sleep Timer)
+    let isDawnEnabled = false;
+    let isDuskEnabled = false;
+
+    function toggleDawn(e) {
       if (e) e.stopPropagation();
-      isScheduleEnabled = !isScheduleEnabled;
-      updateScheduleUI(isScheduleEnabled);
-      sendControl({ scheduleEnabled: isScheduleEnabled });
+      isDawnEnabled = !isDawnEnabled;
+      updateDawnUI(isDawnEnabled);
+      sendControl({ dawnEnabled: isDawnEnabled });
     }
 
-    function updateScheduleUI(enabled) {
-      isScheduleEnabled = enabled;
-      const btn = document.getElementById('btn-sched-toggle');
-      const txt = document.getElementById('sched-status-text');
+    function toggleDusk(e) {
+      if (e) e.stopPropagation();
+      isDuskEnabled = !isDuskEnabled;
+      updateDuskUI(isDuskEnabled);
+      sendControl({ duskEnabled: isDuskEnabled });
+    }
+
+    function updateDawnUI(enabled) {
+      isDawnEnabled = enabled;
+      const btn = document.getElementById('btn-dawn-toggle');
+      const txt = document.getElementById('dawn-status-text');
       if (btn && txt) {
-        if (enabled) {
-          btn.className = 'power-btn on';
-          txt.innerText = 'ВКЛ';
-        } else {
-          btn.className = 'power-btn';
-          txt.innerText = 'ВЫКЛ';
-        }
+        btn.className = enabled ? 'power-btn on' : 'power-btn';
+        txt.innerText = enabled ? 'ВКЛ' : 'ВЫКЛ';
+      }
+    }
+
+    function updateDuskUI(enabled) {
+      isDuskEnabled = enabled;
+      const btn = document.getElementById('btn-dusk-toggle');
+      const txt = document.getElementById('dusk-status-text');
+      if (btn && txt) {
+        btn.className = enabled ? 'power-btn on' : 'power-btn';
+        txt.innerText = enabled ? 'ВКЛ' : 'ВЫКЛ';
       }
     }
 
@@ -1312,8 +1336,11 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (data.time) {
           document.getElementById('lamp-time').innerText = data.time;
         }
-        if (data.scheduleEnabled !== undefined) {
-          updateScheduleUI(data.scheduleEnabled);
+        if (data.dawnEnabled !== undefined) {
+          updateDawnUI(data.dawnEnabled);
+        }
+        if (data.duskEnabled !== undefined) {
+          updateDuskUI(data.duskEnabled);
         }
         const dawnInp = document.getElementById('sched-dawn-time');
         if (dawnInp && document.activeElement !== dawnInp && data.dawnTime) {
@@ -1331,10 +1358,10 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('telem-uptime').innerText = formatUptime(data.uptime || 0);
         document.getElementById('telem-heap').innerText = data.freeHeap || '--';
         document.getElementById('telem-imu').innerText = data.imuStatus || '--';
-        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.8.0');
+        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.8.1');
 
         // OTA info
-        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.8.0');
+        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.8.1');
         document.getElementById('ota-latest-ver').innerText = data.latestVersion ? ('v' + data.latestVersion) : 'не проверялась';
         document.getElementById('ota-status').innerText = data.otaStatus || 'Idle';
 

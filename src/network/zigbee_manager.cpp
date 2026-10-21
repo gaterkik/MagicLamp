@@ -139,38 +139,113 @@ void ZigbeeManager::update(WiFiManager* wifi, EffectManager* eff, LedMatrix* mat
 void ZigbeeManager::playSwitchAnimation(uint8_t mode) {
     if (!m_matrix) return;
 
-    Serial.printf("[ZigbeeManager] Playing 3 waves for %s...\n",
-                  (mode == RADIO_MODE_WIFI) ? "Wi-Fi (Cyan/Teal)" : "Zigbee (Purple/Magenta)");
+    Serial.printf("[ZigbeeManager] Playing switch animation for %s...\n",
+                  (mode == RADIO_MODE_WIFI) ? "Wi-Fi (Horizontal top beacon)" : "Zigbee (Vertical rings convergence)");
 
     uint8_t prevBrightness = m_matrix->getBrightness();
     if (prevBrightness < 64) {
         m_matrix->setBrightness(128);
     }
 
-    // 3 Teal/Cyan waves for Wi-Fi, 3 Purple/Magenta waves for Zigbee
-    CRGB waveColor = (mode == RADIO_MODE_WIFI) 
-                     ? CRGB(0, 220, 210)    // Teal / Cyan
-                     : CRGB(200, 20, 220);  // Purple / Magenta
-
-    const int numWaves = 3;
-    const uint32_t waveDurationMs = 380;
-
-    for (int w = 0; w < numWaves; w++) {
+    if (mode == RADIO_MODE_WIFI) {
+        // Wi-Fi: Horizontal rotating bright-green/cyan beacon along two top rings (Y=14..15) for 1.8 s
+        const uint32_t durationMs = 1800;
         uint32_t start = millis();
-        while (millis() - start < waveDurationMs) {
-            float phase = static_cast<float>(millis() - start) / static_cast<float>(waveDurationMs);
-            float waveCenterY = phase * (MATRIX_HEIGHT + 4) - 2.0f;
+        while (millis() - start < durationMs) {
+            uint32_t elapsed = millis() - start;
+            // 4 full 360-deg rotations across 1.8 s (~450 ms per full cylinder revolution)
+            float angle = (static_cast<float>(elapsed % 450) / 450.0f) * MATRIX_WIDTH;
+            int centerCol = static_cast<int>(angle);
 
-            for (int y = 0; y < MATRIX_HEIGHT; y++) {
-                float dist = fabsf(static_cast<float>(y) - waveCenterY);
-                float factor = fmaxf(0.0f, 1.0f - dist * 0.32f);
-                factor = factor * factor;
+            m_matrix->clear(false);
+            CRGB beaconColor = CRGB(0, 255, 180); // Bright emerald/cyan-green beacon
 
-                CRGB rowCol = waveColor;
-                rowCol.nscale8_video(static_cast<uint8_t>(factor * 255.0f));
-
+            for (int y = 14; y <= 15; y++) {
                 for (int x = 0; x < MATRIX_WIDTH; x++) {
-                    m_matrix->setPixel(x, y, rowCol);
+                    int dx = abs(x - centerCol);
+                    if (dx > MATRIX_WIDTH / 2) dx = MATRIX_WIDTH - dx;
+                    float falloff = fmaxf(0.0f, 1.0f - static_cast<float>(dx) / 3.0f);
+                    falloff = falloff * falloff; // Sharp beam profile
+                    CRGB col = beaconColor;
+                    col.nscale8_video(static_cast<uint8_t>(falloff * 255.0f));
+                    m_matrix->setPixel(x, y, col);
+                }
+            }
+            m_matrix->show();
+            delay(15);
+        }
+    } else {
+        // Zigbee: Vertical convergence of two rings (top Y=15 down, bottom Y=0 up) towards equator (Y=7..8)
+        // followed by warm purple-gold flash at center, and soft breathing Alice-purple pulse on equator
+
+        // Phase 1: Convergence (800 ms)
+        const uint32_t convergeDurMs = 800;
+        uint32_t startConv = millis();
+        CRGB ringColor = CRGB(180, 20, 220); // Purple/magenta
+
+        while (millis() - startConv < convergeDurMs) {
+            float progress = static_cast<float>(millis() - startConv) / static_cast<float>(convergeDurMs);
+            progress = constrain(progress, 0.0f, 1.0f);
+            float topY = 15.0f - progress * 7.0f; // 15 down to 8
+            float botY = progress * 7.0f;         // 0 up to 7
+
+            m_matrix->clear(false);
+            for (int y = 0; y < MATRIX_HEIGHT; y++) {
+                float distTop = fabsf(static_cast<float>(y) - topY);
+                float distBot = fabsf(static_cast<float>(y) - botY);
+                float factorTop = fmaxf(0.0f, 1.0f - distTop * 0.9f);
+                float factorBot = fmaxf(0.0f, 1.0f - distBot * 0.9f);
+                float totalFactor = fminf(1.0f, factorTop + factorBot);
+
+                CRGB col = ringColor;
+                col.nscale8_video(static_cast<uint8_t>(totalFactor * 255.0f));
+                for (int x = 0; x < MATRIX_WIDTH; x++) {
+                    m_matrix->setPixel(x, y, col);
+                }
+            }
+            m_matrix->show();
+            delay(15);
+        }
+
+        // Phase 2: Center warm purple-gold flash on equator Y=7..8 (350 ms)
+        const uint32_t flashDurMs = 350;
+        uint32_t startFlash = millis();
+        CRGB purpleGold = CRGB(255, 170, 220); // Warm purple-gold flash
+
+        while (millis() - startFlash < flashDurMs) {
+            float phase = static_cast<float>(millis() - startFlash) / static_cast<float>(flashDurMs);
+            float bright = sinf(phase * 3.14159265f); // 0 -> 1 -> 0
+            uint8_t scale = static_cast<uint8_t>(bright * 255.0f);
+            CRGB flashCol = purpleGold;
+            flashCol.nscale8_video(scale);
+
+            m_matrix->clear(false);
+            for (int y = 7; y <= 8; y++) {
+                for (int x = 0; x < MATRIX_WIDTH; x++) {
+                    m_matrix->setPixel(x, y, flashCol);
+                }
+            }
+            m_matrix->show();
+            delay(15);
+        }
+
+        // Phase 3: Yandex Station Alice purple breathing on center ring Y=7..8 (850 ms)
+        const uint32_t breatheDurMs = 850;
+        uint32_t startBreathe = millis();
+        CRGB alicePurple = CRGB(140, 25, 255); // Signature Alice purple
+
+        while (millis() - startBreathe < breatheDurMs) {
+            float phase = static_cast<float>(millis() - startBreathe) / static_cast<float>(breatheDurMs);
+            float breathe = 0.4f + 0.6f * sinf(phase * 6.2831853f * 1.5f); // Soft pulsing
+            breathe = constrain(breathe, 0.0f, 1.0f);
+            uint8_t scale = static_cast<uint8_t>(breathe * 255.0f);
+            CRGB pulseCol = alicePurple;
+            pulseCol.nscale8_video(scale);
+
+            m_matrix->clear(false);
+            for (int y = 7; y <= 8; y++) {
+                for (int x = 0; x < MATRIX_WIDTH; x++) {
+                    m_matrix->setPixel(x, y, pulseCol);
                 }
             }
             m_matrix->show();
