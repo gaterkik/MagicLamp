@@ -16,6 +16,11 @@ public:
     void init(LedMatrix& matrix) override;
     void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
     const char* getName() const override { return "Nightlight"; }
+    void setColorTemp(uint8_t temp) { m_colorTemp = temp; }
+    uint8_t getColorTemp() const { return m_colorTemp; }
+
+private:
+    uint8_t m_colorTemp = 90;
 };
 
 class EffectDawnDusk : public Effect {

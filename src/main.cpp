@@ -78,7 +78,7 @@ void setup() {
     wifiManager.begin();
 
     // 7. Initialize GitHub OTA Updater
-    otaGithub.init(&ledMatrix);
+    otaGithub.init(&ledMatrix, &effectManager);
 
     // 8. Initialize Zigbee / Radio mode manager
     zigbeeManager.begin(&ledMatrix);
@@ -117,9 +117,9 @@ void loop() {
                 break;
 
             case BUTTON_EVENT_FOUR_CLICKS:
-                // 4 clicks: Toggle Radio Mode (Wi-Fi <-> Zigbee)
-                Serial.println(F("[Control] 4 clicks: Toggling Radio Mode (Wi-Fi <-> Zigbee)..."));
-                zigbeeManager.toggleMode();
+                // 4 clicks: Force 10-minute Wi-Fi session
+                Serial.println(F("[Control] 4 clicks: Requesting 10 min Wi-Fi session..."));
+                zigbeeManager.requestWifiSession(600000, &wifiManager, &effectManager, true);
                 break;
 
             case BUTTON_EVENT_FIVE_CLICKS:
@@ -155,7 +155,10 @@ void loop() {
     // 5. Update WebServer client requests
     webServer.update();
 
-    // 6. Update active effect animation or OTA progress (~60 FPS)
+    // 6. Update Zigbee / Radio mode manager
+    zigbeeManager.update(&wifiManager, &effectManager, &ledMatrix, &otaGithub);
+
+    // 7. Update active effect animation or OTA progress (~60 FPS)
     if (otaGithub.isUpdating()) {
         otaGithub.update(&ledMatrix);
     } else {

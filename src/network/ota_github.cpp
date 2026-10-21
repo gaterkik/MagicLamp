@@ -1,4 +1,5 @@
 #include "ota_github.h"
+#include "effects/effect_manager.h"
 
 static void otaTaskTrampoline(void* param) {
     OtaGithub* updater = static_cast<OtaGithub*>(param);
@@ -13,18 +14,27 @@ OtaGithub::OtaGithub()
       _progress(0),
       _taskHandle(nullptr),
       _lastPeriodicCheck(0),
-      _initialCheckDone(false) {
+      _initialCheckDone(false),
+      m_effectMgr(nullptr) {
     strncpy(m_status, "Idle", sizeof(m_status) - 1);
     strncpy(_latestVersion, FIRMWARE_VERSION, sizeof(_latestVersion) - 1);
 }
 
-void OtaGithub::init(LedMatrix* matrix) {
+void OtaGithub::init(LedMatrix* matrix, EffectManager* effectMgr) {
     m_matrix = matrix;
+    m_effectMgr = effectMgr;
     _lastPeriodicCheck = millis();
     _initialCheckDone = false;
     _checkRequested = false;
     setStatus("Initialized");
-    Serial.printf("[OTA] GitHub OTA module initialized. Current version: v%s\n", FIRMWARE_VERSION);
+    Serial.printf("[OTA] GitHub OTA module initialized. Current version: v%s (Stealth OTA support: ACTIVE)\n", FIRMWARE_VERSION);
+}
+
+bool OtaGithub::isPoweredOn() const {
+    if (m_effectMgr) {
+        return m_effectMgr->isPoweredOn();
+    }
+    return true;
 }
 
 void OtaGithub::triggerCheck() {
@@ -87,7 +97,13 @@ void OtaGithub::update(LedMatrix* matrix) {
 
     // 4. Visual progress feedback while updating
     if (_isUpdating && matrix) {
-        matrix->showOtaProgress(_progress, false, false);
+        if (!isPoweredOn()) {
+            matrix->clear(true);
+            FastLED.clear(true);
+            FastLED.show();
+        } else {
+            matrix->showOtaProgress(_progress, false, false);
+        }
     }
 }
 
@@ -454,7 +470,15 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
         snprintf(errBuf, sizeof(errBuf), "OTA begin err: %s", Update.errorString());
         setStatus(errBuf);
         Serial.printf("[OTA] Update.begin failed: %s\n", Update.errorString());
-        if (m_matrix) m_matrix->showOtaProgress(_progress, false, true);
+        if (m_matrix) {
+            if (!isPoweredOn()) {
+                m_matrix->clear(true);
+                FastLED.clear(true);
+                FastLED.show();
+            } else {
+                m_matrix->showOtaProgress(_progress, false, true);
+            }
+        }
         downloadHttp.end();
         downloadClient.stop();
         return;
@@ -466,7 +490,13 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
             _progress = (int)((progress * 100) / total);
         }
         if (m_matrix) {
-            m_matrix->showOtaProgress(_progress, false, false);
+            if (!isPoweredOn()) {
+                m_matrix->clear(true);
+                FastLED.clear(true);
+                FastLED.show();
+            } else {
+                m_matrix->showOtaProgress(_progress, false, false);
+            }
         }
     });
 
@@ -482,7 +512,15 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
         snprintf(errBuf, sizeof(errBuf), "Size mismatch %u/%d", (unsigned int)written, contentLength);
         setStatus(errBuf);
         Serial.printf("[OTA] Flash write mismatch: written %u != %d\n", (unsigned int)written, contentLength);
-        if (m_matrix) m_matrix->showOtaProgress(_progress, false, true);
+        if (m_matrix) {
+            if (!isPoweredOn()) {
+                m_matrix->clear(true);
+                FastLED.clear(true);
+                FastLED.show();
+            } else {
+                m_matrix->showOtaProgress(_progress, false, true);
+            }
+        }
         Update.abort();
         downloadHttp.end();
         downloadClient.stop();
@@ -494,7 +532,15 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
         snprintf(errBuf, sizeof(errBuf), "OTA end err: %s", Update.errorString());
         setStatus(errBuf);
         Serial.printf("[OTA] Update.end failed: %s\n", Update.errorString());
-        if (m_matrix) m_matrix->showOtaProgress(_progress, false, true);
+        if (m_matrix) {
+            if (!isPoweredOn()) {
+                m_matrix->clear(true);
+                FastLED.clear(true);
+                FastLED.show();
+            } else {
+                m_matrix->showOtaProgress(_progress, false, true);
+            }
+        }
         downloadHttp.end();
         downloadClient.stop();
         return;
@@ -506,14 +552,28 @@ void OtaGithub::performUpdate(const String& downloadUrl) {
     if (Update.isFinished()) {
         _progress = 100;
         if (m_matrix) {
-            m_matrix->showOtaProgress(100, true, false);
+            if (!isPoweredOn()) {
+                m_matrix->clear(true);
+                FastLED.clear(true);
+                FastLED.show();
+            } else {
+                m_matrix->showOtaProgress(100, true, false);
+            }
         }
         setStatus("Update complete! Rebooting...");
         Serial.println(F("[OTA] Firmware successfully installed. Rebooting ESP32..."));
         vTaskDelay(pdMS_TO_TICKS(1000));
         ESP.restart();
     } else {
-        if (m_matrix) m_matrix->showOtaProgress(_progress, false, true);
+        if (m_matrix) {
+            if (!isPoweredOn()) {
+                m_matrix->clear(true);
+                FastLED.clear(true);
+                FastLED.show();
+            } else {
+                m_matrix->showOtaProgress(_progress, false, true);
+            }
+        }
         setStatus("Update not finished");
         Serial.println(F("[OTA] Error: Update.isFinished() returned false."));
     }

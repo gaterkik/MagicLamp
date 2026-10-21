@@ -47,6 +47,9 @@ public:
      */
     void update();
 
+    unsigned long getLastHttpActivityMs() const { return m_lastHttpActivityMs; }
+    void noteHttpActivity();
+
 private:
     WebServer m_server;
 
@@ -60,6 +63,7 @@ private:
 
     bool m_rebootPending;
     unsigned long m_rebootTime;
+    unsigned long m_lastHttpActivityMs;
 
     void registerRoutes();
 

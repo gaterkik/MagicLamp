@@ -20,18 +20,40 @@ void EffectNightlight::update(LedMatrix& matrix, const ImuMpu6050& imu, const Mi
     uint8_t breath = sin8(static_cast<uint8_t>(now / 16));
     float breathFactor = 0.90f + 0.10f * (static_cast<float>(breath) / 255.0f);
 
-    // Warm candle / 2700K incandescent base (R:255, G:147, B:41)
-    // Scaled so average LED current at master brightness 255 does not exceed 9.5 mA (total < 2450 mA)
-    // This guarantees FastLED power limiter NEVER caps brightness, eliminating the 50% plateau!
+    // Color temperature calculation from m_colorTemp (0..255):
+    // 0 = 1800K (Amber/Candle, strictly B = 0!)
+    // 90 = 2700K (Warm Incandescent, R:255, G:147, B:41 ratio)
+    // 255 = 4000K (Soft Warm White, R:255, G:215, B:180 ratio)
+    // Scaled to safe current so FastLED power limiter NEVER throttles!
+    float baseR = 95.0f;
+    float baseG = 54.0f;
+    float baseB = 15.0f;
+
+    if (m_colorTemp <= 90) {
+        float t = static_cast<float>(m_colorTemp) / 90.0f;
+        // 1800K: R=95, G=28, B=0 (melatonin-safe amber, B strictly 0)
+        // 2700K: R=95, G=54, B=15
+        baseR = 95.0f;
+        baseG = 28.0f + (54.0f - 28.0f) * t;
+        baseB = 0.0f + 15.0f * t;
+    } else {
+        float t = static_cast<float>(m_colorTemp - 90) / (255.0f - 90.0f);
+        // 2700K: R=95, G=54, B=15
+        // 4000K: R=90, G=76, B=64
+        baseR = 95.0f + (90.0f - 95.0f) * t;
+        baseG = 54.0f + (76.0f - 54.0f) * t;
+        baseB = 15.0f + (64.0f - 15.0f) * t;
+    }
+
     for (int y = 0; y < MATRIX_HEIGHT; y++) {
         // Frosted lantern organic vertical gradient:
         // Warm candle glow at bottom Y=0 diffusing to soft ambient at Y=15
         float relY = static_cast<float>(y) / static_cast<float>(MATRIX_HEIGHT - 1);
         float vertFactor = 0.50f + 0.50f * (1.0f - relY * 0.75f);
 
-        uint8_t r = static_cast<uint8_t>(constrain(static_cast<int>(95.0f * vertFactor * breathFactor), 0, 255));
-        uint8_t g = static_cast<uint8_t>(constrain(static_cast<int>(54.0f * vertFactor * breathFactor), 0, 255));
-        uint8_t b = static_cast<uint8_t>(constrain(static_cast<int>(15.0f * vertFactor * breathFactor), 0, 255));
+        uint8_t r = static_cast<uint8_t>(constrain(static_cast<int>(baseR * vertFactor * breathFactor), 0, 255));
+        uint8_t g = static_cast<uint8_t>(constrain(static_cast<int>(baseG * vertFactor * breathFactor), 0, 255));
+        uint8_t b = static_cast<uint8_t>(constrain(static_cast<int>(baseB * vertFactor * breathFactor), 0, 255));
         CRGB col = CRGB(r, g, b);
 
         for (int x = 0; x < MATRIX_WIDTH; x++) {

@@ -20,7 +20,15 @@ LampWebServer::LampWebServer()
       m_ota(nullptr),
       m_zigbee(nullptr),
       m_rebootPending(false),
-      m_rebootTime(0) {}
+      m_rebootTime(0),
+      m_lastHttpActivityMs(0) {}
+
+void LampWebServer::noteHttpActivity() {
+    m_lastHttpActivityMs = millis();
+    if (m_zigbee) {
+        m_zigbee->noteHttpActivity();
+    }
+}
 
 void LampWebServer::begin(EffectManager* effectMgr,
                           LedMatrix* matrix,
@@ -38,6 +46,7 @@ void LampWebServer::begin(EffectManager* effectMgr,
     m_zigbee = zigbee;
     m_rebootPending = false;
     m_rebootTime = 0;
+    m_lastHttpActivityMs = millis();
 
     registerRoutes();
     m_server.begin();
@@ -163,6 +172,7 @@ void LampWebServer::registerRoutes() {
 
     // Browser OTA Upload Handler via Update.h
     m_server.on("/api/ota/upload", HTTP_POST, [this]() {
+        noteHttpActivity();
         if (!Update.hasError()) {
             m_server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"Update successful, rebooting...\"}");
             m_rebootPending = true;
@@ -172,39 +182,53 @@ void LampWebServer::registerRoutes() {
         }
     }, [this]() {
         HTTPUpload& upload = m_server.upload();
+        bool isPowered = m_effectMgr ? m_effectMgr->isPoweredOn() : true;
+
         if (upload.status == UPLOAD_FILE_START) {
             Serial.printf("[WebOTA] Update started: %s\n", upload.filename.c_str());
             if (m_matrix) {
                 m_matrix->clear(true);
             }
-            Update.onProgress([this](size_t progress, size_t total) {
+            Update.onProgress([this, isPowered](size_t progress, size_t total) {
                 if (m_matrix && total > 0) {
-                    uint8_t pct = (progress * 100) / total;
-                    m_matrix->showOtaProgress(pct, false, false);
+                    if (!isPowered) {
+                        m_matrix->clear(true);
+                        FastLED.clear(true);
+                        FastLED.show();
+                    } else {
+                        uint8_t pct = (progress * 100) / total;
+                        m_matrix->showOtaProgress(pct, false, false);
+                    }
                 }
             });
             if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
                 Update.printError(Serial);
-                if (m_matrix) m_matrix->showOtaProgress(0, false, true);
+                if (m_matrix && isPowered) m_matrix->showOtaProgress(0, false, true);
             }
         } else if (upload.status == UPLOAD_FILE_WRITE) {
             if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
                 Update.printError(Serial);
-                if (m_matrix) m_matrix->showOtaProgress(0, false, true);
+                if (m_matrix && isPowered) m_matrix->showOtaProgress(0, false, true);
             }
         } else if (upload.status == UPLOAD_FILE_END) {
             if (Update.end(true)) {
                 Serial.printf("[WebOTA] Success: %u bytes written. Reboot pending.\n", upload.totalSize);
                 if (m_matrix) {
-                    m_matrix->showOtaProgress(100, true, false);
+                    if (!isPowered) {
+                        m_matrix->clear(true);
+                        FastLED.clear(true);
+                        FastLED.show();
+                    } else {
+                        m_matrix->showOtaProgress(100, true, false);
+                    }
                 }
             } else {
                 Update.printError(Serial);
-                if (m_matrix) m_matrix->showOtaProgress(0, false, true);
+                if (m_matrix && isPowered) m_matrix->showOtaProgress(0, false, true);
             }
         } else if (upload.status == UPLOAD_FILE_ABORTED) {
             Update.end();
-            if (m_matrix) m_matrix->showOtaProgress(0, false, true);
+            if (m_matrix && isPowered) m_matrix->showOtaProgress(0, false, true);
             Serial.println(F("[WebOTA] Update aborted."));
         }
     });
@@ -228,10 +252,12 @@ void LampWebServer::registerRoutes() {
 }
 
 void LampWebServer::handleRoot() {
+    noteHttpActivity();
     m_server.send_P(200, "text/html; charset=utf-8", WEBUI_HTML);
 }
 
 void LampWebServer::handleStatus() {
+    noteHttpActivity();
     char json[1024];
     float cpuTemp = temperatureRead();
     uint32_t uptimeSec = millis() / 1000UL;
@@ -267,6 +293,7 @@ void LampWebServer::handleStatus() {
                             ",\"brightness\":" + String(prof.brightness) +
                             ",\"speed\":" + String(prof.speed) +
                             ",\"sensitivity\":" + String(prof.sensitivity) +
+                            ",\"param1\":" + String(prof.param1) +
                             ",\"inCycle\":" + String(prof.inCycle ? "true" : "false") + "}";
         }
     }
@@ -280,6 +307,8 @@ void LampWebServer::handleStatus() {
 
     const char* radioMode = m_zigbee ? m_zigbee->getModeString() : "wifi";
     uint16_t cycleMask = m_effectMgr ? m_effectMgr->getCycleMask() : 0xFFFF;
+    uint8_t activeParam1 = m_effectMgr ? m_effectMgr->getProfile(effect).param1 : 90;
+    uint8_t nightlightTemp = m_effectMgr ? m_effectMgr->getProfile(0).param1 : 90;
 
     String jsonStr = "{\"power\":" + String(power ? "true" : "false") +
                      ",\"brightness\":" + String(brightness) +
@@ -287,6 +316,8 @@ void LampWebServer::handleStatus() {
                      ",\"effectName\":\"" + String(effectName) + "\"" +
                      ",\"speed\":" + String(speed) +
                      ",\"micSensitivity\":" + String(micSens) +
+                     ",\"param1\":" + String(activeParam1) +
+                     ",\"colorTemp\":" + String(nightlightTemp) +
                      ",\"radio_mode\":\"" + String(radioMode) + "\"" +
                      ",\"cycle_mask\":" + String(cycleMask) +
                      ",\"time\":\"" + formattedTime + "\"" +
@@ -319,6 +350,7 @@ void LampWebServer::handleStatus() {
 }
 
 void LampWebServer::handleControl() {
+    noteHttpActivity();
     String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
 
     // 1. Power control
@@ -354,6 +386,11 @@ void LampWebServer::handleControl() {
     bool hasMicSens = getIntParam(m_server, body, "micSensitivity", micSensVal) ||
                       getIntParam(m_server, body, "sensitivity", micSensVal);
 
+    int param1Val = 0;
+    bool hasParam1 = getIntParam(m_server, body, "param1", param1Val) ||
+                     getIntParam(m_server, body, "colorTemp", param1Val) ||
+                     getIntParam(m_server, body, "color_temp", param1Val);
+
     bool inCycleVal = false;
     bool hasInCycle = getBoolParam(m_server, body, "inCycle", inCycleVal);
 
@@ -362,17 +399,18 @@ void LampWebServer::handleControl() {
 
         if (hasEffect && effectVal >= 0 && effectVal < totalEff) {
             // Update individual effect profile if parameters provided
-            if (hasInCycle || hasBright || hasSpeed || hasMicSens) {
+            if (hasInCycle || hasBright || hasSpeed || hasMicSens || hasParam1) {
                 EffectProfile prof = m_effectMgr->getProfile(effectVal);
                 if (hasInCycle) prof.inCycle = inCycleVal;
                 if (hasBright) prof.brightness = constrain(brightVal, 10, 255);
                 if (hasSpeed) prof.speed = constrain(speedVal, 1, 255);
                 if (hasMicSens) prof.sensitivity = constrain(micSensVal, 1, 255);
+                if (hasParam1) prof.param1 = constrain(param1Val, 0, 255);
                 m_effectMgr->setProfile(effectVal, prof);
             }
 
             // If request had "effect": index without profile fields or explicitly switching effect:
-            if (!hasInCycle && !hasBright && !hasSpeed && !hasMicSens) {
+            if (!hasInCycle && !hasBright && !hasSpeed && !hasMicSens && !hasParam1) {
                 if (m_matrix) {
                     m_effectMgr->setEffect(effectVal, *m_matrix);
                 }
@@ -397,6 +435,10 @@ void LampWebServer::handleControl() {
                 prof.sensitivity = constrain(micSensVal, 1, 255);
                 m_effectMgr->setMicSensitivity(prof.sensitivity);
                 if (m_mic) m_mic->setSensitivity(prof.sensitivity);
+                profChanged = true;
+            }
+            if (hasParam1) {
+                prof.param1 = constrain(param1Val, 0, 255);
                 profChanged = true;
             }
             if (hasInCycle) {
@@ -465,6 +507,7 @@ void LampWebServer::handleControl() {
 }
 
 void LampWebServer::handleRadioSwitch() {
+    noteHttpActivity();
     if (!m_zigbee) {
         m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"ZigbeeManager unavailable\"}");
         return;
@@ -474,12 +517,12 @@ void LampWebServer::handleRadioSwitch() {
     String modeStr = "";
     if (getStringParam(m_server, body, "mode", modeStr)) {
         if (modeStr == "wifi") {
-            m_zigbee->setMode(RADIO_MODE_WIFI);
+            m_zigbee->setMode(RADIO_MODE_WIFI, true, m_effectMgr, m_wifi);
         } else if (modeStr == "zigbee") {
-            m_zigbee->setMode(RADIO_MODE_ZIGBEE);
+            m_zigbee->setMode(RADIO_MODE_ZIGBEE, true, m_effectMgr, m_wifi);
         }
     } else {
-        m_zigbee->toggleMode();
+        m_zigbee->toggleMode(m_effectMgr, m_wifi);
     }
 
     String res = "{\"status\":\"ok\",\"radio_mode\":\"" + String(m_zigbee->getModeString()) + "\"}";
@@ -487,6 +530,7 @@ void LampWebServer::handleRadioSwitch() {
 }
 
 void LampWebServer::handleOtaCheck() {
+    noteHttpActivity();
     if (m_ota) {
         m_ota->triggerCheck();
         m_server.send(200, "application/json", "{\"status\":\"triggered\"}");
@@ -496,6 +540,7 @@ void LampWebServer::handleOtaCheck() {
 }
 
 void LampWebServer::handleWifi() {
+    noteHttpActivity();
     String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
     String ssid = "";
     String pass = "";
@@ -520,11 +565,13 @@ void LampWebServer::handleWifi() {
 }
 
 void LampWebServer::handleImuDiag() {
+    noteHttpActivity();
     String diagJson = m_imu ? m_imu->runDiagnostics() : "{\"error\":\"IMU unavailable\"}";
     m_server.send(200, "application/json", diagJson);
 }
 
 void LampWebServer::handleNotFound() {
+    noteHttpActivity();
     if (m_wifi && m_wifi->isApMode()) {
         String target = String("http://") + m_wifi->getIpAddress() + "/";
         m_server.sendHeader("Location", target, true);

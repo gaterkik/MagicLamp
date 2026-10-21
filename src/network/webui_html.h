@@ -6,7 +6,7 @@
  * @file webui_html.h
  * @brief Self-contained Single Page Application WebUI stored in Flash memory (PROGMEM).
  *
- * MagicLamp v0.7.0 WebUI:
+ * MagicLamp v0.8.0 WebUI:
  * - Modern Apple-inspired dark mode UI.
  * - Accordion UI for all 16 built-in native effects with individual NVS profiles.
  * - Checkboxes for button cycle inclusion (inCycle / cycle_mask).
@@ -669,7 +669,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="logo-icon">&#9733;</div>
         <div>
           <h1>MagicLamp</h1>
-          <div style="font-size:0.75rem; color:var(--text-muted);">ESP32-C6 Interactive Light v0.7.0</div>
+          <div style="font-size:0.75rem; color:var(--text-muted);">ESP32-C6 Interactive Light v0.8.0</div>
         </div>
       </div>
       <div class="header-badges">
@@ -769,7 +769,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
         <div class="telem-item">
           <div class="telem-label">Версия</div>
-          <div class="telem-val" id="telem-ver">v0.7.0</div>
+          <div class="telem-val" id="telem-ver">v0.8.0</div>
         </div>
       </div>
     </section>
@@ -780,7 +780,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       
       <div class="ota-row">
         <div>
-          <div class="ota-info">Текущая версия: <strong id="ota-cur-ver">v0.7.0</strong> | Последняя на GitHub: <strong id="ota-latest-ver">--</strong></div>
+          <div class="ota-info">Текущая версия: <strong id="ota-cur-ver">v0.8.0</strong> | Последняя на GitHub: <strong id="ota-latest-ver">--</strong></div>
           <div class="ota-info" style="margin-top:4px;">Статус проверки: <span id="ota-status" style="color:var(--primary);">Idle</span></div>
         </div>
         <button id="btn-ota-check" class="btn btn-secondary" onclick="triggerGithubOta()">
@@ -903,6 +903,22 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                    onchange="onBrightnessChange(${eff.id}, this.value)">
           </div>
         `;
+
+        // 1.5 Color Temperature Slider (Only for Nightlight #0: 1800K - 4000K)
+        if (eff.id === 0) {
+          const initKelvin = Math.round(1800 + (90 / 255) * 2200);
+          dynamicControls += `
+            <div class="slider-group">
+              <div class="slider-header">
+                <span>Температура света (1800K — 4000K)</span>
+                <span id="val-temp-${eff.id}" class="slider-val">${initKelvin}K</span>
+              </div>
+              <input type="range" id="slider-temp-${eff.id}" min="0" max="255" value="90"
+                     oninput="onTempInput(${eff.id}, this.value)"
+                     onchange="onTempChange(${eff.id}, this.value)">
+            </div>
+          `;
+        }
 
         // 2. Individual Speed Slider (Only for dynamic effects)
         if (eff.dynamic) {
@@ -1057,6 +1073,18 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     function onMicChange(id, val) {
       isDragging = false;
       sendControl({ effect: id, micSensitivity: parseInt(val, 10) });
+    }
+
+    function onTempInput(id, val) {
+      isDragging = true;
+      const kelvin = Math.round(1800 + (val / 255) * 2200);
+      const el = document.getElementById(`val-temp-${id}`);
+      if (el) el.innerText = `${kelvin}K`;
+    }
+    function onTempChange(id, val) {
+      isDragging = false;
+      const v = parseInt(val, 10);
+      sendControl({ effect: id, param1: v, colorTemp: v });
     }
 
     // Schedule actions
@@ -1264,6 +1292,18 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                 const txt = document.getElementById(`val-mic-${eff.index}`);
                 if (txt) txt.innerText = eff.sensitivity;
               }
+
+              if (eff.index === 0) {
+                const sTemp = document.getElementById(`slider-temp-0`);
+                if (sTemp && eff.param1 !== undefined) {
+                  sTemp.value = eff.param1;
+                  const txt = document.getElementById(`val-temp-0`);
+                  if (txt) {
+                    const kelvin = Math.round(1800 + (eff.param1 / 255) * 2200);
+                    txt.innerText = `${kelvin}K`;
+                  }
+                }
+              }
             }
           });
         }
@@ -1291,10 +1331,10 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('telem-uptime').innerText = formatUptime(data.uptime || 0);
         document.getElementById('telem-heap').innerText = data.freeHeap || '--';
         document.getElementById('telem-imu').innerText = data.imuStatus || '--';
-        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.7.0');
+        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.8.0');
 
         // OTA info
-        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.7.0');
+        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.8.0');
         document.getElementById('ota-latest-ver').innerText = data.latestVersion ? ('v' + data.latestVersion) : 'не проверялась';
         document.getElementById('ota-status').innerText = data.otaStatus || 'Idle';
 

@@ -17,7 +17,7 @@
 - **Фаза 2 (Task 2.1 – 2.4):** Движок 9 базовых эффектов и NVS — `DONE`
 - **Фаза 3 (Task 3.1 – 3.4):** Калибровка железа, 10-й эффект, Wi-Fi, WebUI, Silent OTA — `DONE`
 - **Фаза 4 (Task 4.1 – 4.7):** Магазин эффектов, EffectVM, v0.6.0 Профили эффектов в NVS, NTP Будильник Рассвет/Отбой, Аудио и Скорость — `DONE`
-- **Фаза 5 (Task 5.1 – 5.2):** Apple UX, 16 встроенных эффектов, карточки-аккордеоны с галочками в WebUI, аппаратный Wire для GY-521 и Zigbee-модуль — `DONE`
+- **Фаза 5 (Task 5.1 – 5.3):** Apple UX, 16 встроенных эффектов, карточки-аккордеоны с галочками в WebUI, аппаратный Wire для GY-521, Zigbee-модуль и релиз v0.8.0 — `DONE`
 
 ---
 
@@ -348,4 +348,42 @@
   4. Кнопка TTP223 генерирует `BUTTON_EVENT_FOUR_CLICKS` при 4 кликах, переключая режим радио с анимацией 3 волн на матрице.
   5. Эндпоинт `POST /api/radio/switch` переключает режим радио и сохраняет его в NVS.
   6. Сборка `pio run` завершается со статусом `SUCCESS`.
+- **QA_Notes:** Проверено QA: замечаний нет.
+
+---
+
+### [Task 5.3] Релиз v0.8.0: Регулировка цветовой температуры Ночника, аудио-реактивность CyberPulse, Бесшумный ночной OTA (Stealth Mode) и авто-переключение Wi-Fi / Zigbee
+- **Status:** `DONE`
+- **Files:** `include/version.h`, `src/effects/effect_manager.h`, `src/effects/effect_manager.cpp`, `src/effects/core_effects.h`, `src/effects/core_effects.cpp`, `src/effects/extra_effects.h`, `src/effects/extra_effects.cpp`, `src/hal/imu_mpu6050.h`, `src/hal/imu_mpu6050.cpp`, `src/network/ota_github.h`, `src/network/ota_github.cpp`, `src/network/webui_html.h`, `src/network/web_server.h`, `src/network/web_server.cpp`, `src/network/zigbee_manager.h`, `src/network/zigbee_manager.cpp`, `src/network/wifi_manager.h`, `src/network/wifi_manager.cpp`, `src/main.cpp`
+- **Description:**
+  1. **Версия прошивки (`include/version.h`):** Поднять `FIRMWARE_VERSION` до `"0.8.0"`.
+  2. **Регулировка температуры света Ночника (`Nightlight` в `effect_manager.*`, `core_effects.*`, `webui_html.h`):**
+     - Добавить поле `uint8_t param1` в `EffectProfile` (для Ночника это `colorTemp`, по умолчанию `90` ~ 2700K).
+     - Сохранять `param1` в NVS для профилей эффектов, отдавать в `GET /api/status` и принимать в `POST /api/control`.
+     - В `EffectNightlight`: плавно менять оттенок от янтарно-свечного (1800K, `B=0`) через теплый (2700K) до мягкого тепло-белого (4000K) на основе `colorTemp`.
+     - В `webui_html.h`: в раскрывающейся карточке «Ночник» отображать ползунок «Температура света (1800K — 4000K)».
+  3. **Реальная аудио-реактивность Киберпанк-пульс (`CyberPulse` в `extra_effects.*`, `effect_manager.*`):**
+     - Подключить `MicI2S` к рендеру `CyberPulse`: в тишине — плавное движение неоновой сетки (пурпурный/циан/фиолетовый); при наличии звука 16 полос FFT (`getBand(0..15)`) динамически модулируют высоту и свечение столбцов по окружности цилиндра, а детектор бита (`isBeat()`) запускает от центра (`Y=7..8`) к краям (`0` и `15`) яркие расходящиеся ударные кольца с учетом ползунка `sensitivity`.
+  4. **Бесшумный ночной OTA (Stealth OTA при выключенной лампе):**
+     - Сохранять состояние питания лампы (`isPoweredOn`) в NVS при любых изменениях и восстанавливать в `EffectManager::begin()`.
+     - Если лампа выключена (`!isPoweredOn()`), во время OTA-обновления матрица остается ПОЛНОСТЬЮ темной (0% свечения, без шкал и вспышек), а после перезагрузки лампа запускается в выключенном состоянии.
+     - Если лампа включена (`isPoweredOn()`), воспроизводить полноценную анимацию прогресса (0..100%) и волну успеха.
+  5. **Умная автоматика Wi-Fi <-> Zigbee (`zigbee_manager.*`, `wifi_manager.*`, `web_server.*`):**
+     - При включении лампа поднимает Wi-Fi на 60 секунд (NTP GMT+2, OTA check).
+     - Любое обращение к WebServer (открытый браузер) продлевает сеанс Wi-Fi на 10 минут (`m_lastHttpActivityMs`).
+     - Если режим Zigbee активирован и нет веб-активности 10 минут — автоматический переход в Zigbee.
+     - Раз в сутки в 04:00 GMT+2 авто-включение Wi-Fi на 45 секунд (проверка обновлений в Stealth Mode при выключенной лампе) и возврат в Zigbee.
+     - 4 клика кнопки принудительно включают Wi-Fi на 10 минут.
+     - `ZigbeeColorDimmableLight`: управление вкл/выкл, яркостью и маппинг цветов/оттенков Алисы на 16 эффектов.
+  6. **Внутренние подтяжки и диагностика GY-521 (`imu_mpu6050.*`):**
+     - Принудительно включать `gpio_set_pull_mode(GPIO_NUM_5, GPIO_PULLUP_ONLY)` и `gpio_set_pull_mode(GPIO_NUM_6, GPIO_PULLUP_ONLY)` перед стартом I2C.
+     - В `/api/imu/diag` выводить точные поля проверки подтяжек: `gpio5_ext_pullup` и `gpio6_ext_pullup`.
+- **Acceptance Criteria (Критерии для QA):**
+  1. `FIRMWARE_VERSION` в `include/version.h` равна `"0.8.0"`.
+  2. В карточке «Ночник» в WebUI есть ползунок «Температура света (1800K — 4000K)», меняющий оттенок от свечного до мягкого белого с сохранением в NVS (`param1`).
+  3. В `CyberPulse` задействованы все 16 полос FFT `getBand(0..15)` и детектор бита `isBeat()`, чувствительность масштабируется ползунком `sensitivity`.
+  4. При выключенной лампе OTA проходит в Stealth Mode (матрица 0% свечения, после рестарта лампа выключена).
+  5. Автоматика Wi-Fi/Zigbee отрабатывает таймер 10 мин активности WebUI, стартовое окно 60 с, ночное окно 04:00 и 4 клика кнопки; команды Алисы маппятся на эффекты.
+  6. В `imu_mpu6050.cpp` включены подтяжки `gpio_set_pull_mode` для пинов 5 и 6, эндпоинт `/api/imu/diag` возвращает `gpio5_ext_pullup` и `gpio6_ext_pullup`.
+  7. Сборка `pio run` завершается со статусом `SUCCESS`.
 - **QA_Notes:** Проверено QA: замечаний нет.

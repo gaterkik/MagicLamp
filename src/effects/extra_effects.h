@@ -117,9 +117,15 @@ public:
     void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
     const char* getName() const override { return "CyberPulse"; }
 
+    void setSensitivity(uint8_t sens) { m_sensitivity = (sens < 1) ? 1 : sens; }
+    uint8_t getSensitivity() const { return m_sensitivity; }
+
 private:
-    float m_pulseRadius;
-    float m_pulseSpeed;
+    uint8_t m_sensitivity;
+    float m_peakHeight[MATRIX_WIDTH];
+    static constexpr uint8_t MAX_SHOCKWAVES = 3;
+    float m_shockRadius[MAX_SHOCKWAVES];
+    float m_shockAlpha[MAX_SHOCKWAVES];
     CRGBPalette16 m_palette;
     uint32_t m_lastFrameTime;
     float m_phase;

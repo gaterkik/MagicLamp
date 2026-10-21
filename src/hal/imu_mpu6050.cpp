@@ -1,6 +1,7 @@
 #include "imu_mpu6050.h"
 #include <Wire.h>
 #include <math.h>
+#include <driver/gpio.h>
 
 // MPU-6050 Register Map
 static constexpr uint8_t REG_CONFIG        = 0x1A;
@@ -314,6 +315,10 @@ bool ImuMpu6050::scanPins() {
 bool ImuMpu6050::begin() {
     m_lastAutoScanTime = millis();
 
+    // Enable internal pullups for ESP32-C6 GPIO 5 (SCL) and GPIO 6 (SDA)
+    gpio_set_pull_mode(GPIO_NUM_5, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(GPIO_NUM_6, GPIO_PULLUP_ONLY);
+
     // 1. Primary attempt: pure hardware Wire.begin(m_sdaPin, m_sclPin, 100000) WITHOUT pinMode()
     Serial.printf("[IMU] Hardware Wire probe on SDA=%d, SCL=%d (100 kHz)...\n", m_sdaPin, m_sclPin);
     Wire.begin(m_sdaPin, m_sclPin, 100000);
@@ -612,8 +617,16 @@ String ImuMpu6050::runDiagnostics() {
     bool sclExtPullup = (digitalRead(m_sclPin) == HIGH);
     pinMode(m_sdaPin, INPUT_PULLUP);
     pinMode(m_sclPin, INPUT_PULLUP);
+    gpio_set_pull_mode(GPIO_NUM_5, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(GPIO_NUM_6, GPIO_PULLUP_ONLY);
+
+    bool gpio5ExtPullup = (m_sclPin == 5) ? sclExtPullup : ((m_sdaPin == 5) ? sdaExtPullup : false);
+    bool gpio6ExtPullup = (m_sdaPin == 6) ? sdaExtPullup : ((m_sclPin == 6) ? sclExtPullup : false);
+
     out += "\"sda_ext_pullup\":" + String(sdaExtPullup ? "true" : "false") + ",";
-    out += "\"scl_ext_pullup\":" + String(sclExtPullup ? "true" : "false");
+    out += "\"scl_ext_pullup\":" + String(sclExtPullup ? "true" : "false") + ",";
+    out += "\"gpio5_ext_pullup\":" + String(gpio5ExtPullup ? "true" : "false") + ",";
+    out += "\"gpio6_ext_pullup\":" + String(gpio6ExtPullup ? "true" : "false");
 
     out += "}";
 

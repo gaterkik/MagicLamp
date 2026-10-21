@@ -99,6 +99,7 @@ struct EffectProfile {
     uint8_t speed = 128;
     uint8_t sensitivity = 128;
     bool inCycle = true;
+    uint8_t param1 = 90; // for Nightlight: colorTemp 0..255 (default 90 ~ 2700K)
 };
 
 struct ScheduleConfig {
@@ -171,6 +172,11 @@ public:
      * @brief Turn lamp OFF with 600 ms falling curtain (15..0).
      */
     void powerOff();
+
+    /**
+     * @brief Set lamp power state directly.
+     */
+    void setPower(bool on);
 
     /**
      * @brief Check whether the lamp is currently powered on or turning on.

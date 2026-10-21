@@ -15,12 +15,16 @@
  * parses assets for 'firmware.bin', follows HTTP 302 redirects,
  * downloads and flashes the update, and reboots cleanly.
  */
+class EffectManager;
+
 class OtaGithub {
 public:
     OtaGithub();
     ~OtaGithub() = default;
 
-    void init(LedMatrix* matrix = nullptr);
+    void init(LedMatrix* matrix = nullptr, EffectManager* effectMgr = nullptr);
+    void setEffectManager(EffectManager* effectMgr) { m_effectMgr = effectMgr; }
+    bool isPoweredOn() const;
     void triggerCheck();
     void update(LedMatrix* matrix);
 
@@ -51,6 +55,7 @@ private:
     char _latestVersion[32] = "";
 
     LedMatrix* m_matrix = nullptr;
+    EffectManager* m_effectMgr = nullptr;
     TaskHandle_t _taskHandle = nullptr;
     unsigned long _lastPeriodicCheck = 0;
     bool _initialCheckDone = false;

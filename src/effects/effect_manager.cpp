@@ -37,9 +37,11 @@ EffectManager::EffectManager()
         m_profiles[i].speed = 128;
         m_profiles[i].sensitivity = 128;
         m_profiles[i].inCycle = true;
+        m_profiles[i].param1 = 90;
     }
     // Nightlight default warm brightness
     m_profiles[0].brightness = 80;
+    m_profiles[0].param1 = 90;
 
     memset(m_prevBuffer, 0, sizeof(m_prevBuffer));
 
@@ -75,7 +77,7 @@ void EffectManager::begin(LedMatrix& matrix) {
     // 1. Open NVS namespace "magiclamp" in read-write mode
     m_prefs.begin("magiclamp", false);
 
-    m_powerState = m_prefs.getBool("power", true);
+    m_powerState = m_prefs.getBool("power_on", m_prefs.getBool("power", true));
     m_currentEffectIndex = m_prefs.getUChar("effect", 0);
     if (m_currentEffectIndex >= NUM_CORE_EFFECTS) {
         m_currentEffectIndex = 0;
@@ -97,8 +99,10 @@ void EffectManager::begin(LedMatrix& matrix) {
         if (m_profiles[i].brightness < 10) m_profiles[i].brightness = (i == 0 ? 80 : 128);
         if (m_profiles[i].speed < 1) m_profiles[i].speed = 128;
         if (m_profiles[i].sensitivity < 1) m_profiles[i].sensitivity = 128;
+        if (m_profiles[i].param1 == 0 && i != 0) m_profiles[i].param1 = 90;
         m_profiles[i].inCycle = ((m_cycleMask & (1 << i)) != 0);
     }
+    if (m_profiles[0].param1 == 0) m_profiles[0].param1 = 90;
 
     // 3. Load Dawn/Dusk schedule from "schedule" namespace
     Preferences schPrefs;
@@ -122,18 +126,25 @@ void EffectManager::begin(LedMatrix& matrix) {
             m_effects[i]->setSpeed(m_profiles[i].speed);
         }
     }
+    if (m_effects[0]) {
+        static_cast<EffectNightlight*>(m_effects[0])->setColorTemp(m_profiles[0].param1);
+    }
+    if (m_effects[15]) {
+        static_cast<EffectCyberPulse*>(m_effects[15])->setSensitivity(m_profiles[15].sensitivity);
+    }
 
     m_curtainState = m_powerState ? CurtainState::OPEN : CurtainState::CLOSED;
     matrix.setBrightness(m_powerState ? m_targetBrightness : 0);
 
-    Serial.printf("[EffectManager] NVS Loaded: Power=%s, Effect=%d (%s), Brightness=%d, Speed=%d, MicSens=%d, CycleMask=0x%04X\n",
+    Serial.printf("[EffectManager] NVS Loaded: Power=%s, Effect=%d (%s), Brightness=%d, Speed=%d, MicSens=%d, CycleMask=0x%04X, NightlightTemp=%d\n",
                   m_powerState ? "ON" : "OFF",
                   m_currentEffectIndex,
                   getCurrentEffectName(),
                   m_targetBrightness,
                   m_speed,
                   m_micSensitivity,
-                  m_cycleMask);
+                  m_cycleMask,
+                  m_profiles[0].param1);
 
     // Initialize the restored effect
     if (m_effects[m_currentEffectIndex]) {
@@ -141,7 +152,11 @@ void EffectManager::begin(LedMatrix& matrix) {
     }
 
     if (!m_powerState) {
+        matrix.setBrightness(0);
+        FastLED.setBrightness(0);
         matrix.clear(true);
+        FastLED.clear(true);
+        FastLED.show();
     }
 }
 
@@ -298,6 +313,11 @@ void EffectManager::setEffect(uint8_t index, LedMatrix& matrix) {
 
     if (m_effects[m_currentEffectIndex]) {
         m_effects[m_currentEffectIndex]->setSpeed(m_speed);
+        if (m_currentEffectIndex == 0) {
+            static_cast<EffectNightlight*>(m_effects[0])->setColorTemp(m_profiles[0].param1);
+        } else if (m_currentEffectIndex == 15) {
+            static_cast<EffectCyberPulse*>(m_effects[15])->setSensitivity(m_micSensitivity);
+        }
         m_effects[m_currentEffectIndex]->init(matrix);
     }
 
@@ -330,6 +350,8 @@ void EffectManager::powerOn() {
         m_curtainState = CurtainState::OPENING;
         m_curtainStartTime = millis();
         FastLED.setBrightness(m_targetBrightness);
+        m_prefs.putBool("power_on", true);
+        m_prefs.putBool("power", true);
         Serial.println(F("[EffectManager] Power ON: curtain opening 0..15 over 600 ms"));
         markNvsDirty();
     }
@@ -340,8 +362,18 @@ void EffectManager::powerOff() {
         m_powerState = false;
         m_curtainState = CurtainState::CLOSING;
         m_curtainStartTime = millis();
+        m_prefs.putBool("power_on", false);
+        m_prefs.putBool("power", false);
         Serial.println(F("[EffectManager] Power OFF: curtain closing 15..0 over 600 ms"));
         markNvsDirty();
+    }
+}
+
+void EffectManager::setPower(bool on) {
+    if (on) {
+        powerOn();
+    } else {
+        powerOff();
     }
 }
 
@@ -371,6 +403,9 @@ void EffectManager::setMicSensitivity(uint8_t sensitivity) {
     if (sensitivity < 1) sensitivity = 1;
     m_micSensitivity = sensitivity;
     m_profiles[m_currentEffectIndex].sensitivity = sensitivity;
+    if (m_currentEffectIndex == 15 && m_effects[15]) {
+        static_cast<EffectCyberPulse*>(m_effects[15])->setSensitivity(sensitivity);
+    }
     markProfilesDirty();
     markNvsDirty();
 }
@@ -479,6 +514,11 @@ EffectProfile EffectManager::getProfile(uint8_t index) const {
 void EffectManager::setProfile(uint8_t index, const EffectProfile& prof) {
     if (index < NUM_CORE_EFFECTS) {
         m_profiles[index] = prof;
+        if (index == 0 && m_effects[0]) {
+            static_cast<EffectNightlight*>(m_effects[0])->setColorTemp(prof.param1);
+        } else if (index == 15 && m_effects[15]) {
+            static_cast<EffectCyberPulse*>(m_effects[15])->setSensitivity(prof.sensitivity);
+        }
         if (prof.inCycle) {
             m_cycleMask |= (1 << index);
         } else {
@@ -649,6 +689,7 @@ void EffectManager::markNvsDirty() {
 void EffectManager::updateNvs() {
     if (m_nvsDirty && (millis() - m_nvsDirtyTime >= NVS_SAVE_DELAY_MS)) {
         m_nvsDirty = false;
+        m_prefs.putBool("power_on", m_powerState);
         m_prefs.putBool("power", m_powerState);
         m_prefs.putUChar("effect", m_currentEffectIndex);
         m_prefs.putUChar("bright", m_targetBrightness);

@@ -354,16 +354,34 @@ void EffectFireworks::update(LedMatrix& matrix, const ImuMpu6050& /*imu*/, const
 // =============================================================================
 
 EffectCyberPulse::EffectCyberPulse()
-    : m_pulseRadius(0.0f),
-      m_pulseSpeed(6.0f),
+    : m_sensitivity(128),
       m_lastFrameTime(0),
       m_phase(0.0f) {
     m_speed = 128;
+    for (int i = 0; i < MATRIX_WIDTH; i++) {
+        m_peakHeight[i] = 0.0f;
+    }
+    for (int i = 0; i < MAX_SHOCKWAVES; i++) {
+        m_shockRadius[i] = -1.0f;
+        m_shockAlpha[i] = 0.0f;
+    }
     m_palette = CRGBPalette16(
-        CRGB(20, 0, 40), CRGB(60, 0, 80), CRGB(120, 0, 160), CRGB(180, 0, 190),
-        CRGB(255, 0, 128), CRGB(255, 40, 160), CRGB(200, 0, 220), CRGB(140, 0, 255),
-        CRGB(80, 0, 255), CRGB(0, 120, 255), CRGB(0, 200, 255), CRGB(0, 240, 255),
-        CRGB(180, 240, 255), CRGB(0, 240, 255), CRGB(140, 0, 255), CRGB(255, 0, 128)
+        CRGB(30, 0, 60),     // Deep violet
+        CRGB(80, 0, 120),    // Purple
+        CRGB(150, 0, 180),   // Neon purple
+        CRGB(220, 0, 200),   // Magenta
+        CRGB(255, 0, 140),   // Hot pink
+        CRGB(255, 40, 180),  // Neon pink
+        CRGB(180, 0, 240),   // Electric violet
+        CRGB(100, 0, 255),   // Deep blue-violet
+        CRGB(0, 80, 255),    // Electric blue
+        CRGB(0, 160, 255),   // Neon blue
+        CRGB(0, 220, 240),   // Bright cyan
+        CRGB(0, 255, 255),   // Electric cyan
+        CRGB(180, 240, 255), // White-cyan highlight
+        CRGB(0, 220, 240),   // Bright cyan
+        CRGB(140, 0, 255),   // Purple
+        CRGB(255, 0, 140)    // Hot pink
     );
 }
 
@@ -371,8 +389,13 @@ void EffectCyberPulse::init(LedMatrix& matrix) {
     matrix.clear(false);
     m_lastFrameTime = millis();
     m_phase = 0.0f;
-    m_pulseRadius = 0.0f;
-    m_pulseSpeed = 6.0f;
+    for (int i = 0; i < MATRIX_WIDTH; i++) {
+        m_peakHeight[i] = 0.0f;
+    }
+    for (int i = 0; i < MAX_SHOCKWAVES; i++) {
+        m_shockRadius[i] = -1.0f;
+        m_shockAlpha[i] = 0.0f;
+    }
 }
 
 void EffectCyberPulse::update(LedMatrix& matrix, const ImuMpu6050& /*imu*/, const MicI2S& mic) {
@@ -382,34 +405,124 @@ void EffectCyberPulse::update(LedMatrix& matrix, const ImuMpu6050& /*imu*/, cons
     m_lastFrameTime = now;
 
     float speedMult = static_cast<float>(m_speed) / 128.0f;
+    float sensMult = static_cast<float>(m_sensitivity) / 128.0f;
     m_phase += speedMult * dt * 2.0f;
 
-    float audioBeat = mic.getNormalizedLevel();
-    m_pulseRadius += (m_pulseSpeed * speedMult + audioBeat * 12.0f) * dt;
-    if (m_pulseRadius > 14.0f) {
-        m_pulseRadius = 0.0f;
+    // 1. Beat detection triggers expanding shockwave rings from center (Y=7.5) to edges (Y=0, Y=15)
+    bool beat = const_cast<MicI2S&>(mic).isBeat();
+    float peak = mic.getPeak() * sensMult;
+    float rawRms = mic.getRawRms() * sensMult;
+
+    if (beat || (peak > 0.45f && rawRms > 0.08f)) {
+        int slot = 0;
+        float minAlpha = m_shockAlpha[0];
+        for (int i = 0; i < MAX_SHOCKWAVES; i++) {
+            if (m_shockRadius[i] < 0.0f) {
+                slot = i;
+                break;
+            }
+            if (m_shockAlpha[i] < minAlpha) {
+                minAlpha = m_shockAlpha[i];
+                slot = i;
+            }
+        }
+        m_shockRadius[slot] = 0.0f;
+        m_shockAlpha[slot] = 1.0f;
     }
 
+    // Step expanding shockwave rings
+    for (int i = 0; i < MAX_SHOCKWAVES; i++) {
+        if (m_shockRadius[i] >= 0.0f) {
+            m_shockRadius[i] += dt * 14.0f * (0.8f + 0.3f * speedMult);
+            m_shockAlpha[i] -= dt * 2.2f;
+            if (m_shockRadius[i] > 10.0f || m_shockAlpha[i] <= 0.0f) {
+                m_shockRadius[i] = -1.0f;
+                m_shockAlpha[i] = 0.0f;
+            }
+        }
+    }
+
+    // 2. 16 frequency bands FFT analysis
+    float totalBandMag = 0.0f;
+    float bandMag[MATRIX_WIDTH];
+    for (uint8_t x = 0; x < MATRIX_WIDTH; x++) {
+        float raw = mic.getBand(x);
+        float scaled = constrain(raw * sensMult, 0.0f, 1.0f);
+        bandMag[x] = scaled;
+        totalBandMag += scaled;
+
+        float targetHeight = powf(scaled, 0.82f) * 15.9f;
+        if (targetHeight > m_peakHeight[x]) {
+            m_peakHeight[x] = targetHeight;
+        } else {
+            m_peakHeight[x] = fmaxf(0.0f, m_peakHeight[x] - dt * 20.0f);
+        }
+    }
+    float avgSound = totalBandMag / static_cast<float>(MATRIX_WIDTH);
+    float soundPresence = constrain(avgSound * 8.0f + mic.getNormalizedLevel() * sensMult * 2.0f, 0.0f, 1.0f);
+
+    // 3. Render matrix pixels
     for (uint8_t x = 0; x < MATRIX_WIDTH; x++) {
         float normX = static_cast<float>(x) / static_cast<float>(MATRIX_WIDTH);
         float theta = normX * 2.0f * M_PI;
+        float colH = m_peakHeight[x];
+        float colMag = bandMag[x];
 
         for (uint8_t y = 0; y < MATRIX_HEIGHT; y++) {
-            float dy = fabsf(static_cast<float>(y) - 7.5f);
-            float distToPulse = fabsf(dy - m_pulseRadius);
+            float distFromCenter = fabsf(static_cast<float>(y) - 7.5f);
 
-            float ring = fmaxf(0.0f, 1.0f - distToPulse * 0.7f);
-            float wave = (sinf(theta * 4.0f + m_phase * 2.0f) + 1.0f) * 0.3f;
-            float total = fminf(1.0f, ring + wave * (0.4f + audioBeat * 0.6f));
+            // A. Silence background: undulating synthwave cyber-grid (purple / cyan / violet)
+            float gridWaveX = (sinf(theta * 3.0f + m_phase) + 1.0f) * 0.5f;
+            float gridWaveY = (sinf(static_cast<float>(y) * 0.5f - m_phase * 1.5f) + 1.0f) * 0.5f;
+            float gridPattern = gridWaveX * 0.5f + gridWaveY * 0.5f;
 
-            if (total > 0.1f) {
-                uint8_t palIdx = static_cast<uint8_t>(total * 180.0f + y * 8 + static_cast<uint8_t>(m_phase * 20.0f));
-                uint8_t bri = static_cast<uint8_t>(total * 255.0f);
-                CRGB color = ColorFromPalette(m_palette, palIdx, bri, LINEARBLEND);
-                matrix.setPixel(x, y, color);
+            // Horizontal neon scanlines
+            float scanline = (sinf(static_cast<float>(y) * 1.2f - m_phase * 3.0f) > 0.7f) ? 0.35f : 0.08f;
+            float silenceIntensity = fminf(1.0f, gridPattern * 0.6f + scanline);
+
+            uint8_t silencePalIdx = static_cast<uint8_t>(x * 12 + y * 8 + static_cast<uint8_t>(m_phase * 24.0f));
+            CRGB silenceColor = ColorFromPalette(m_palette, silencePalIdx, static_cast<uint8_t>(silenceIntensity * 160.0f), LINEARBLEND);
+
+            // B. Sound columns: 16 FFT columns dynamic height and glow
+            CRGB soundColor = CRGB::Black;
+            float yF = static_cast<float>(y);
+            if (yF <= colH) {
+                float hRatio = yF / fmaxf(colH, 1.0f);
+                uint8_t colPalIdx = static_cast<uint8_t>(x * 16 + static_cast<uint8_t>(hRatio * 90.0f));
+                uint8_t colBri = static_cast<uint8_t>(constrain(static_cast<int>((0.5f + 0.5f * colMag) * 255.0f), 0, 255));
+                soundColor = ColorFromPalette(m_palette, colPalIdx, colBri, LINEARBLEND);
+
+                // Peak tip highlight
+                if (fabsf(yF - colH) < 1.2f) {
+                    soundColor += CRGB(100, 180, 255);
+                }
             } else {
-                matrix.setPixel(x, y, CRGB::Black);
+                // Dim ambient glow above active column
+                float distAbove = yF - colH;
+                if (distAbove < 4.0f) {
+                    float glow = (1.0f - distAbove * 0.25f) * colMag * 0.4f;
+                    soundColor = ColorFromPalette(m_palette, x * 16, static_cast<uint8_t>(glow * 255.0f), LINEARBLEND);
+                }
             }
+
+            // Blend between silence grid and reactive columns
+            CRGB pixel = blend(silenceColor, soundColor, static_cast<uint8_t>(soundPresence * 255.0f));
+
+            // C. Shockwave rings from center (Y=7.5) to edges (Y=0, Y=15)
+            for (int s = 0; s < MAX_SHOCKWAVES; s++) {
+                if (m_shockRadius[s] >= 0.0f && m_shockAlpha[s] > 0.01f) {
+                    float distToShock = fabsf(distFromCenter - m_shockRadius[s]);
+                    if (distToShock < 1.5f) {
+                        float ringFactor = (1.0f - distToShock / 1.5f) * m_shockAlpha[s];
+                        uint8_t ringBri = static_cast<uint8_t>(ringFactor * 255.0f);
+                        CRGB ringColor = ColorFromPalette(m_palette, static_cast<uint8_t>(180 + s * 30), ringBri, LINEARBLEND);
+                        ringColor += CRGB(ringBri / 2, ringBri / 2, ringBri); // Punchy electric tint
+                        pixel += ringColor;
+                    }
+                }
+            }
+
+            matrix.setPixel(x, y, pixel);
         }
     }
 }
