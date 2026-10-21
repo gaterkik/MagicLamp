@@ -9,16 +9,16 @@
 #include "network/wifi_manager.h"
 #include "network/ota_github.h"
 #include "network/web_server.h"
-#include "network/store_manager.h"
+#include "network/zigbee_manager.h"
 
 static ButtonDriver button(PIN_BUTTON, BUTTON_ACTIVE_LEVEL);
 static LedMatrix ledMatrix;
 static ImuMpu6050 imu(PIN_I2C_SDA, PIN_I2C_SCL, MPU6050_I2C_ADDR, IMU_SAMPLE_INTERVAL_MS, IMU_SHAKE_THRESHOLD);
 static MicI2S mic(PIN_MIC_SCK, PIN_MIC_WS, PIN_MIC_SD);
 static EffectManager effectManager;
-static StoreManager storeManager;
 static WiFiManager wifiManager;
 static OtaGithub otaGithub;
+static ZigbeeManager zigbeeManager;
 static LampWebServer webServer;
 static unsigned long lastTempPrintTime = 0;
 
@@ -35,7 +35,7 @@ void setup() {
     Serial.println(F("========================================"));
     Serial.println(F("   MagicLamp Firmware (ESP32-C6)        "));
     Serial.printf( "   Version: v%s                         \n", FIRMWARE_VERSION);
-    Serial.println(F("   Phase 3: Wi-Fi, mDNS & Silent OTA    "));
+    Serial.println(F("   Phase 5: 16 Built-in Effects & UX    "));
     Serial.println(F("========================================"));
     Serial.printf("Repo: %s (%s/%s)\n", PROJECT_REPO_URL, PROJECT_REPO_OWNER, PROJECT_REPO_NAME);
     Serial.printf("Timezone: %s (Offset: %d sec)\n", TIMEZONE_NAME, TIMEZONE_OFFSET_SEC);
@@ -72,19 +72,19 @@ void setup() {
 
     // 5. Initialize Effect Manager & NVS preferences
     effectManager.begin(ledMatrix);
-    Serial.println(F("[EffectManager] Engine ready with 10 core effects and NVS debounce."));
+    Serial.println(F("[EffectManager] Engine ready with 16 built-in effects and NVS debounce."));
 
-    // 6. Initialize LittleFS and StoreManager (scan installed custom .eff effects)
-    storeManager.begin(&effectManager);
-
-    // 7. Initialize Wi-Fi Manager (STA or SoftAP + Captive Portal + mDNS + ArduinoOTA)
+    // 6. Initialize Wi-Fi Manager (STA or SoftAP + Captive Portal + mDNS + ArduinoOTA)
     wifiManager.begin();
 
-    // 8. Initialize GitHub OTA Updater
-    otaGithub.init();
+    // 7. Initialize GitHub OTA Updater
+    otaGithub.init(&ledMatrix);
 
-    // 9. Initialize WebServer & WebUI with Store endpoints
-    webServer.begin(&effectManager, &ledMatrix, &mic, &imu, &wifiManager, &otaGithub, &storeManager);
+    // 8. Initialize Zigbee / Radio mode manager
+    zigbeeManager.begin(&ledMatrix);
+
+    // 9. Initialize WebServer & WebUI
+    webServer.begin(&effectManager, &ledMatrix, &mic, &imu, &wifiManager, &otaGithub, &zigbeeManager);
 
     Serial.println(F("Initialization complete. Entering main loop..."));
 }
@@ -106,7 +106,7 @@ void loop() {
                 break;
 
             case BUTTON_EVENT_DOUBLE_CLICK:
-                // Double click: Switch to next effect in circle (0..9)
+                // Double click: Switch to next effect in circle (0..15)
                 effectManager.nextEffect(ledMatrix);
                 break;
 
@@ -114,6 +114,12 @@ void loop() {
                 // Triple click: Trigger GitHub Silent OTA release check
                 Serial.println(F("[Control] Triple click: Checking for GitHub OTA updates..."));
                 otaGithub.triggerCheck();
+                break;
+
+            case BUTTON_EVENT_FOUR_CLICKS:
+                // 4 clicks: Toggle Radio Mode (Wi-Fi <-> Zigbee)
+                Serial.println(F("[Control] 4 clicks: Toggling Radio Mode (Wi-Fi <-> Zigbee)..."));
+                zigbeeManager.toggleMode();
                 break;
 
             case BUTTON_EVENT_FIVE_CLICKS:
@@ -161,9 +167,10 @@ void loop() {
     if (currentMillis - lastTempPrintTime >= TEMP_PRINT_INTERVAL_MS) {
         lastTempPrintTime = currentMillis;
         float cpuTemp = temperatureRead();
-        Serial.printf("[Telemetry] Uptime: %lu s | CPU: %.1f °C | Wi-Fi: %s (%s, RSSI: %d) | OTA: %s | Power: %s | Effect: [%d] %s | Bright: %d | Speed: %d | MicSens: %d | IMU: (%.2f, %.2f, %.2f) %s | Mic: %.2f | NVS Dirty: %s\n",
+        Serial.printf("[Telemetry] Uptime: %lu s | CPU: %.1f °C | Radio: %s | Wi-Fi: %s (%s, RSSI: %d) | OTA: %s | Power: %s | Effect: [%d] %s | Bright: %d | Speed: %d | MicSens: %d | IMU: (%.2f, %.2f, %.2f) %s | Mic: %.2f | NVS Dirty: %s\n",
                       currentMillis / 1000UL,
                       cpuTemp,
+                      zigbeeManager.getModeString(),
                       wifiManager.isApMode() ? "AP" : (wifiManager.isConnected() ? "STA" : "DISC"),
                       wifiManager.getIpAddress().c_str(),
                       wifiManager.getRssi(),

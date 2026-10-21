@@ -9,7 +9,7 @@ class MicI2S;
 class ImuMpu6050;
 class WiFiManager;
 class OtaGithub;
-class StoreManager;
+class ZigbeeManager;
 
 /**
  * @file web_server.h
@@ -19,9 +19,10 @@ class StoreManager;
  * - Single Page Application WebUI served from PROGMEM (GET /).
  * - Telemetry & status reporting (GET /api/status).
  * - Real-time lamp control (POST /api/control).
+ * - Radio mode switching (POST /api/radio/switch).
  * - GitHub Silent OTA trigger (POST /api/ota/check).
  * - Direct browser firmware upload via Update.h (POST /api/ota/upload).
- * - GitHub Effect Store endpoints (GET /api/store/installed, GET /api/store/catalog, POST /api/store/install, POST /api/store/delete).
+ * - IMU hardware diagnostics (GET /api/imu/diag).
  * - Wi-Fi credentials configuration (POST /api/wifi).
  * - Captive Portal redirection when in SoftAP setup mode.
  */
@@ -39,7 +40,7 @@ public:
                ImuMpu6050* imu,
                WiFiManager* wifi,
                OtaGithub* ota,
-               StoreManager* store = nullptr);
+               ZigbeeManager* zigbee = nullptr);
 
     /**
      * @brief Process incoming client HTTP requests. Call frequently in loop().
@@ -55,7 +56,7 @@ private:
     ImuMpu6050* m_imu;
     WiFiManager* m_wifi;
     OtaGithub* m_ota;
-    StoreManager* m_store;
+    ZigbeeManager* m_zigbee;
 
     bool m_rebootPending;
     unsigned long m_rebootTime;
@@ -65,12 +66,10 @@ private:
     void handleRoot();
     void handleStatus();
     void handleControl();
+    void handleRadioSwitch();
     void handleOtaCheck();
     void handleWifi();
-    void handleStoreInstalled();
-    void handleStoreCatalog();
-    void handleStoreInstall();
-    void handleStoreDelete();
+    void handleImuDiag();
     void handleNotFound();
 };
 

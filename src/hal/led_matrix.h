@@ -135,6 +135,14 @@ public:
     uint8_t getBrightness() const;
 
     /**
+     * @brief Visual progress bar and animation for OTA firmware updates.
+     * @param percent 0..100% progress during download/flashing.
+     * @param success True when update completed successfully (triggers 1.2s emerald wave).
+     * @param error True if update failed or aborted (triggers 3 soft red pulses).
+     */
+    void showOtaProgress(uint8_t percent, bool success = false, bool error = false);
+
+    /**
      * @brief Enable or disable the running wave test effect.
      * If disabled, turns off all LEDs immediately.
      * @param enabled True to enable, false to disable.

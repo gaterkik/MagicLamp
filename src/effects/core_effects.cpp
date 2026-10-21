@@ -126,7 +126,8 @@ void EffectDawnDusk::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI
                 }
                 return;
             } else if (inDusk) {
-                // Dusk: soft amber light 2000K with smooth fade out until off at end
+                // Dusk: Отбой strictly eliminates blue/violet spectrum (B = 0 on entire fade out!)
+                // Warm amber candle spectrum CRGB(r, g, 0) with g = r * 0.28 (~1900K, melatonin-safe)
                 duskProgress = constrain(duskProgress, 0.0f, 1.0f);
                 float duskBriFactor = 1.0f - duskProgress; // 1.0 down to 0.0
                 uint8_t briScale = static_cast<uint8_t>(duskBriFactor * 255.0f);
@@ -134,11 +135,9 @@ void EffectDawnDusk::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI
                 for (int y = 0; y < MATRIX_HEIGHT; y++) {
                     float relY = static_cast<float>(y) / static_cast<float>(MATRIX_HEIGHT - 1);
                     float rowFactor = 0.5f + 0.5f * (1.0f - relY * 0.7f);
-                    CRGB duskColor(
-                        static_cast<uint8_t>(255 * rowFactor),
-                        static_cast<uint8_t>(110 * rowFactor),
-                        static_cast<uint8_t>(20 * rowFactor)
-                    );
+                    uint8_t r = static_cast<uint8_t>(255.0f * rowFactor);
+                    uint8_t g = static_cast<uint8_t>(static_cast<float>(r) * 0.28f);
+                    CRGB duskColor(r, g, 0);
                     duskColor.nscale8_video(briScale);
 
                     for (int x = 0; x < MATRIX_WIDTH; x++) {

@@ -138,3 +138,71 @@ CRGB* LedMatrix::getLeds() {
 const CRGB* LedMatrix::getLeds() const {
     return m_leds;
 }
+
+void LedMatrix::showOtaProgress(uint8_t percent, bool success, bool error) {
+    if (error) {
+        // 3 soft red pulses
+        for (int p = 0; p < 3; p++) {
+            for (int b = 0; b <= 180; b += 12) {
+                fill(CRGB(b, 0, 0));
+                show();
+                delay(12);
+            }
+            for (int b = 180; b >= 0; b -= 12) {
+                fill(CRGB(b, 0, 0));
+                show();
+                delay(12);
+            }
+        }
+        clear(true);
+        return;
+    }
+
+    if (success) {
+        // 1.2-second emerald-green wave
+        uint32_t start = millis();
+        while (millis() - start < 1200) {
+            uint32_t t = millis() - start;
+            float phase = static_cast<float>(t) / 1200.0f; // 0..1
+            float waveCenter = phase * 18.0f; // bottom to top
+            for (int y = 0; y < MATRIX_HEIGHT; y++) {
+                float dist = fabsf(static_cast<float>(y) - waveCenter);
+                float bright = fmaxf(0.12f, 1.0f - dist * 0.28f);
+                CRGB col = CRGB(0, static_cast<uint8_t>(bright * 255), static_cast<uint8_t>(bright * 120));
+                for (int x = 0; x < MATRIX_WIDTH; x++) {
+                    setPixel(x, y, col);
+                }
+            }
+            show();
+            delay(16);
+        }
+        clear(true);
+        return;
+    }
+
+    // 0..100% cylinder bottom-up filling with breathing pulsating edge
+    if (percent > 100) percent = 100;
+    float fillHeight = (static_cast<float>(percent) / 100.0f) * static_cast<float>(MATRIX_HEIGHT);
+    uint8_t pulse = sin8(static_cast<uint8_t>(millis() / 4));
+    float pulseFactor = 0.5f + 0.5f * (static_cast<float>(pulse) / 255.0f);
+
+    for (int y = 0; y < MATRIX_HEIGHT; y++) {
+        float fy = static_cast<float>(y);
+        CRGB rowColor = CRGB::Black;
+        if (fy < fillHeight - 1.0f) {
+            // Solid turquoise/cyan-blue
+            rowColor = CRGB(0, 140, 240);
+        } else if (fy <= fillHeight) {
+            // Pulsing edge
+            float edgeAlpha = fillHeight - fy;
+            rowColor = CRGB(0, static_cast<uint8_t>(180.0f * pulseFactor * edgeAlpha), static_cast<uint8_t>(255.0f * pulseFactor * edgeAlpha));
+        } else {
+            rowColor = CRGB::Black;
+        }
+
+        for (int x = 0; x < MATRIX_WIDTH; x++) {
+            setPixel(x, y, rowColor);
+        }
+    }
+    show();
+}

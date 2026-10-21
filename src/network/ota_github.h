@@ -20,7 +20,7 @@ public:
     OtaGithub();
     ~OtaGithub() = default;
 
-    void init();
+    void init(LedMatrix* matrix = nullptr);
     void triggerCheck();
     void update(LedMatrix* matrix);
 
@@ -50,6 +50,7 @@ private:
     char m_status[192] = "Idle";
     char _latestVersion[32] = "";
 
+    LedMatrix* m_matrix = nullptr;
     TaskHandle_t _taskHandle = nullptr;
     unsigned long _lastPeriodicCheck = 0;
     bool _initialCheckDone = false;

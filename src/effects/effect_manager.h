@@ -8,42 +8,53 @@
 #include "hal/mic_i2s.h"
 
 #ifndef NUM_CORE_EFFECTS
-#define NUM_CORE_EFFECTS 10
+#define NUM_CORE_EFFECTS 16
 #endif
 
 #ifndef MAX_TOTAL_EFFECTS
-#define MAX_TOTAL_EFFECTS 24
+#define MAX_TOTAL_EFFECTS 16
 #endif
-
 
 #ifndef NVS_SAVE_DELAY_MS
 #define NVS_SAVE_DELAY_MS 3000
 #endif
 
-#ifndef FADE_DURATION_MS
-#define FADE_DURATION_MS 350
+#ifndef CROSSFADE_DURATION_MS
+#define CROSSFADE_DURATION_MS 500
+#endif
+
+#ifndef CURTAIN_DURATION_MS
+#define CURTAIN_DURATION_MS 600
 #endif
 
 /**
  * @file effect_manager.h
  * @brief Base Effect class and EffectManager driver with NVS persistence for MagicLamp.
  *
- * Implements:
- * - Base class `Effect` with `init()` and `update()` methods.
- * - 9 core effect slots:
- *     0: Nightlight
- *     1: DawnDusk
- *     2: Fire
- *     3: PerlinNoise
- *     4: GameOfLife
- *     5: LorenzAttractor
- *     6: Metaballs
- *     7: SandHourglass
- *     8: AudioReactive
- * - Smooth power toggle with fade in / fade out.
- * - Circular effect switching.
- * - Smooth brightness dimmer with direction reversal.
- * - Delayed NVS persistence via Preferences (>= 3000 ms debounce, zero flash wear).
+ * Implements 16 built-in native effects (0..15):
+ *  0: Nightlight
+ *  1: DawnDusk
+ *  2: Fire
+ *  3: PerlinNoise
+ *  4: GameOfLife
+ *  5: LorenzAttractor
+ *  6: Metaballs
+ *  7: SandHourglass
+ *  8: AudioReactive
+ *  9: Fireflies
+ * 10: Aurora
+ * 11: MatrixRain
+ * 12: LavaLamp
+ * 13: Vortex
+ * 14: Fireworks
+ * 15: CyberPulse
+ *
+ * UX features:
+ * - 500 ms seamless crossfade buffer blending between effects.
+ * - 600 ms curtain wave for lamp power on (0..15) and power off (15..0).
+ * - Individual NVS profiles for all 16 effects (brightness, speed, sensitivity, inCycle).
+ * - cycle_mask bitmask (uint16_t, default 0xFFFF) for circular button switching.
+ * - Melatonin-safe amber spectrum (B = 0) for DawnDusk inDusk mode.
  */
 
 class Effect {
@@ -87,6 +98,7 @@ struct EffectProfile {
     uint8_t brightness = 128;
     uint8_t speed = 128;
     uint8_t sensitivity = 128;
+    bool inCycle = true;
 };
 
 struct ScheduleConfig {
@@ -99,14 +111,21 @@ struct ScheduleConfig {
     uint8_t duskDurationMin = 30; // 30 min
 };
 
+enum class CurtainState : uint8_t {
+    OPEN = 0,
+    OPENING,
+    CLOSING,
+    CLOSED
+};
+
 class EffectManager {
 public:
     EffectManager();
     ~EffectManager();
 
     /**
-     * @brief Initialize NVS preferences and instantiate all 10 core effects.
-     * Loads saved effect index, brightness, speed, sensitivity, and power state.
+     * @brief Initialize NVS preferences and instantiate all 16 built-in effects.
+     * Loads saved effect index, brightness, speed, sensitivity, cycle_mask, and power state.
      * @param matrix Reference to LedMatrix driver.
      */
     void begin(LedMatrix& matrix);
@@ -120,41 +139,41 @@ public:
     void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic);
 
     /**
-     * @brief Switch to the next effect in circular order (0..9 -> 0).
+     * @brief Switch to the next enabled effect in circular order (0..15 -> 0) filtering by cycle_mask.
      * @param matrix Reference to LedMatrix driver.
      */
     void nextEffect(LedMatrix& matrix);
 
     /**
-     * @brief Switch to the previous effect in circular order.
+     * @brief Switch to the previous enabled effect in circular order filtering by cycle_mask.
      * @param matrix Reference to LedMatrix driver.
      */
     void prevEffect(LedMatrix& matrix);
 
     /**
-     * @brief Set specific effect by index (0..9).
+     * @brief Set specific effect by index (0..15) with 500 ms crossfade.
      * @param index Effect index.
      * @param matrix Reference to LedMatrix driver.
      */
     void setEffect(uint8_t index, LedMatrix& matrix);
 
     /**
-     * @brief Toggle lamp power with smooth fade transition.
+     * @brief Toggle lamp power with 600 ms curtain transition.
      */
     void togglePower();
 
     /**
-     * @brief Turn lamp ON with smooth fade.
+     * @brief Turn lamp ON with 600 ms rising curtain (0..15).
      */
     void powerOn();
 
     /**
-     * @brief Turn lamp OFF with smooth fade.
+     * @brief Turn lamp OFF with 600 ms falling curtain (15..0).
      */
     void powerOff();
 
     /**
-     * @brief Check whether the lamp is currently powered on.
+     * @brief Check whether the lamp is currently powered on or turning on.
      */
     bool isPoweredOn() const { return m_powerState; }
 
@@ -206,7 +225,7 @@ public:
     void toggleDimmerDirection();
 
     /**
-     * @brief Get index of currently active effect (0..9).
+     * @brief Get index of currently active effect (0..15).
      */
     uint8_t getCurrentEffectIndex() const { return m_currentEffectIndex; }
 
@@ -221,21 +240,9 @@ public:
     bool isNvsDirty() const { return m_nvsDirty; }
 
     /**
-     * @brief Register a dynamic custom effect (e.g. from LittleFS .eff).
-     * @param effect Pointer to allocated Effect instance (ownership transferred to EffectManager).
-     * @return true if registered, false if MAX_TOTAL_EFFECTS reached.
+     * @brief Get total number of active effects (16).
      */
-    bool registerCustomEffect(Effect* effect);
-
-    /**
-     * @brief Remove and delete all dynamically loaded custom effects.
-     */
-    void clearCustomEffects();
-
-    /**
-     * @brief Get total number of active effects (core 10 + installed custom).
-     */
-    uint8_t getTotalEffects() const { return m_totalEffects; }
+    uint8_t getTotalEffects() const { return NUM_CORE_EFFECTS; }
 
     /**
      * @brief Get effect pointer by index.
@@ -270,6 +277,16 @@ public:
     void setProfile(uint8_t index, const EffectProfile& prof);
 
     /**
+     * @brief Get button cycle bitmask (16 bits for effects 0..15).
+     */
+    uint16_t getCycleMask() const { return m_cycleMask; }
+
+    /**
+     * @brief Set button cycle bitmask.
+     */
+    void setCycleMask(uint16_t mask);
+
+    /**
      * @brief Get Dawn/Dusk schedule configuration.
      */
     ScheduleConfig getSchedule() const { return m_schedule; }
@@ -279,13 +296,18 @@ public:
      */
     void setSchedule(const ScheduleConfig& cfg);
 
+    /**
+     * @brief Get current power curtain state.
+     */
+    CurtainState getCurtainState() const { return m_curtainState; }
+
 private:
     void markNvsDirty();
     void updateNvs();
     void markProfilesDirty();
     void updateProfilesNvs();
     void updateSchedule(LedMatrix& matrix);
-    void updateFade(LedMatrix& matrix);
+    void applyCurtain(LedMatrix& matrix);
     void renderLimitFlash(LedMatrix& matrix);
 
     Preferences m_prefs;
@@ -297,7 +319,8 @@ private:
     uint8_t m_speed;
     uint8_t m_micSensitivity;
 
-    EffectProfile m_profiles[MAX_TOTAL_EFFECTS];
+    EffectProfile m_profiles[NUM_CORE_EFFECTS];
+    uint16_t m_cycleMask;
     bool m_profilesDirty;
     uint32_t m_profileSaveTime;
 
@@ -314,7 +337,14 @@ private:
     uint32_t m_nvsDirtyTime;
 
     uint32_t m_lastFrameTime;
-    uint8_t m_totalEffects;
-    Effect* m_effects[MAX_TOTAL_EFFECTS];
-};
+    Effect* m_effects[NUM_CORE_EFFECTS];
 
+    // Crossfade 500 ms state
+    CRGB m_prevBuffer[NUM_LEDS];
+    bool m_crossfading;
+    uint32_t m_crossfadeStartTime;
+
+    // Curtain 600 ms animation state
+    CurtainState m_curtainState;
+    uint32_t m_curtainStartTime;
+};

@@ -74,7 +74,7 @@
 // Effects & Storage Parameters
 // =============================================================================
 
-#define NUM_CORE_EFFECTS        10
+#define NUM_CORE_EFFECTS        16
 #define NVS_SAVE_DELAY_MS       3000
 #define FADE_DURATION_MS        350
 #define DEFAULT_BRIGHTNESS      128

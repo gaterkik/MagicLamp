@@ -10,6 +10,8 @@ const char* buttonEventToString(ButtonEvent event) {
             return "BUTTON_EVENT_DOUBLE_CLICK";
         case BUTTON_EVENT_TRIPLE_CLICK:
             return "BUTTON_EVENT_TRIPLE_CLICK";
+        case BUTTON_EVENT_FOUR_CLICKS:
+            return "BUTTON_EVENT_FOUR_CLICKS";
         case BUTTON_EVENT_FIVE_CLICKS:
             return "BUTTON_EVENT_FIVE_CLICKS";
         case BUTTON_EVENT_LONG_PRESS_HOLD:
@@ -155,6 +157,8 @@ ButtonEvent ButtonDriver::update() {
                 event = BUTTON_EVENT_DOUBLE_CLICK;
             } else if (_clickCount == 3) {
                 event = BUTTON_EVENT_TRIPLE_CLICK;
+            } else if (_clickCount == 4) {
+                event = BUTTON_EVENT_FOUR_CLICKS;
             } else if (_clickCount >= 5) {
                 event = BUTTON_EVENT_FIVE_CLICKS;
             }

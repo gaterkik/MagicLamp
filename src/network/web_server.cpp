@@ -7,7 +7,7 @@
 #include "hal/imu_mpu6050.h"
 #include "wifi_manager.h"
 #include "ota_github.h"
-#include "store_manager.h"
+#include "zigbee_manager.h"
 #include <Update.h>
 
 LampWebServer::LampWebServer()
@@ -18,7 +18,7 @@ LampWebServer::LampWebServer()
       m_imu(nullptr),
       m_wifi(nullptr),
       m_ota(nullptr),
-      m_store(nullptr),
+      m_zigbee(nullptr),
       m_rebootPending(false),
       m_rebootTime(0) {}
 
@@ -28,14 +28,14 @@ void LampWebServer::begin(EffectManager* effectMgr,
                           ImuMpu6050* imu,
                           WiFiManager* wifi,
                           OtaGithub* ota,
-                          StoreManager* store) {
+                          ZigbeeManager* zigbee) {
     m_effectMgr = effectMgr;
     m_matrix = matrix;
     m_mic = mic;
     m_imu = imu;
     m_wifi = wifi;
     m_ota = ota;
-    m_store = store;
+    m_zigbee = zigbee;
     m_rebootPending = false;
     m_rebootTime = 0;
 
@@ -154,14 +154,12 @@ void LampWebServer::registerRoutes() {
     // REST API
     m_server.on("/api/status", HTTP_GET, [this]() { handleStatus(); });
     m_server.on("/api/control", HTTP_POST, [this]() { handleControl(); });
+    m_server.on("/api/radio/switch", HTTP_POST, [this]() { handleRadioSwitch(); });
     m_server.on("/api/ota/check", HTTP_POST, [this]() { handleOtaCheck(); });
     m_server.on("/api/wifi", HTTP_POST, [this]() { handleWifi(); });
 
-    // GitHub Effect Store API
-    m_server.on("/api/store/installed", HTTP_GET, [this]() { handleStoreInstalled(); });
-    m_server.on("/api/store/catalog", HTTP_GET, [this]() { handleStoreCatalog(); });
-    m_server.on("/api/store/install", HTTP_POST, [this]() { handleStoreInstall(); });
-    m_server.on("/api/store/delete", HTTP_POST, [this]() { handleStoreDelete(); });
+    // IMU Hardware Diagnostics API
+    m_server.on("/api/imu/diag", HTTP_GET, [this]() { handleImuDiag(); });
 
     // Browser OTA Upload Handler via Update.h
     m_server.on("/api/ota/upload", HTTP_POST, [this]() {
@@ -179,21 +177,34 @@ void LampWebServer::registerRoutes() {
             if (m_matrix) {
                 m_matrix->clear(true);
             }
+            Update.onProgress([this](size_t progress, size_t total) {
+                if (m_matrix && total > 0) {
+                    uint8_t pct = (progress * 100) / total;
+                    m_matrix->showOtaProgress(pct, false, false);
+                }
+            });
             if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
                 Update.printError(Serial);
+                if (m_matrix) m_matrix->showOtaProgress(0, false, true);
             }
         } else if (upload.status == UPLOAD_FILE_WRITE) {
             if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
                 Update.printError(Serial);
+                if (m_matrix) m_matrix->showOtaProgress(0, false, true);
             }
         } else if (upload.status == UPLOAD_FILE_END) {
             if (Update.end(true)) {
                 Serial.printf("[WebOTA] Success: %u bytes written. Reboot pending.\n", upload.totalSize);
+                if (m_matrix) {
+                    m_matrix->showOtaProgress(100, true, false);
+                }
             } else {
                 Update.printError(Serial);
+                if (m_matrix) m_matrix->showOtaProgress(0, false, true);
             }
         } else if (upload.status == UPLOAD_FILE_ABORTED) {
             Update.end();
+            if (m_matrix) m_matrix->showOtaProgress(0, false, true);
             Serial.println(F("[WebOTA] Update aborted."));
         }
     });
@@ -250,7 +261,13 @@ void LampWebServer::handleStatus() {
     if (m_effectMgr) {
         for (uint8_t i = 0; i < totalEff; i++) {
             if (i > 0) effectsArray += ",";
-            effectsArray += "{\"index\":" + String(i) + ",\"name\":\"" + String(m_effectMgr->getEffectName(i)) + "\"}";
+            EffectProfile prof = m_effectMgr->getProfile(i);
+            effectsArray += "{\"index\":" + String(i) +
+                            ",\"name\":\"" + String(m_effectMgr->getEffectName(i)) + "\"" +
+                            ",\"brightness\":" + String(prof.brightness) +
+                            ",\"speed\":" + String(prof.speed) +
+                            ",\"sensitivity\":" + String(prof.sensitivity) +
+                            ",\"inCycle\":" + String(prof.inCycle ? "true" : "false") + "}";
         }
     }
     effectsArray += "]";
@@ -261,12 +278,17 @@ void LampWebServer::handleStatus() {
     snprintf(dawnBuf, sizeof(dawnBuf), "%02d:%02d", sch.dawnHour, sch.dawnMinute);
     snprintf(duskBuf, sizeof(duskBuf), "%02d:%02d", sch.duskHour, sch.duskMinute);
 
+    const char* radioMode = m_zigbee ? m_zigbee->getModeString() : "wifi";
+    uint16_t cycleMask = m_effectMgr ? m_effectMgr->getCycleMask() : 0xFFFF;
+
     String jsonStr = "{\"power\":" + String(power ? "true" : "false") +
                      ",\"brightness\":" + String(brightness) +
                      ",\"effect\":" + String(effect) +
                      ",\"effectName\":\"" + String(effectName) + "\"" +
                      ",\"speed\":" + String(speed) +
                      ",\"micSensitivity\":" + String(micSens) +
+                     ",\"radio_mode\":\"" + String(radioMode) + "\"" +
+                     ",\"cycle_mask\":" + String(cycleMask) +
                      ",\"time\":\"" + formattedTime + "\"" +
                      ",\"scheduleEnabled\":" + String(sch.enabled ? "true" : "false") +
                      ",\"dawnTime\":\"" + String(dawnBuf) + "\"" +
@@ -299,6 +321,7 @@ void LampWebServer::handleStatus() {
 void LampWebServer::handleControl() {
     String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
 
+    // 1. Power control
     bool powerVal = false;
     if (getBoolParam(m_server, body, "power", powerVal)) {
         if (m_effectMgr) {
@@ -307,34 +330,83 @@ void LampWebServer::handleControl() {
         }
     }
 
-    int brightVal = 0;
-    if (getIntParam(m_server, body, "brightness", brightVal)) {
-        if (brightVal < 10) brightVal = 10;
-        if (brightVal > 255) brightVal = 255;
-        if (m_effectMgr) m_effectMgr->setBrightness(brightVal);
-    }
-
-    int effectVal = 0;
-    if (getIntParam(m_server, body, "effect", effectVal)) {
-        uint8_t totalEff = m_effectMgr ? m_effectMgr->getTotalEffects() : NUM_CORE_EFFECTS;
-        if (effectVal >= 0 && effectVal < totalEff && m_effectMgr && m_matrix) {
-            m_effectMgr->setEffect(effectVal, *m_matrix);
+    // 2. Cycle mask control
+    int cycleMaskVal = 0;
+    if (getIntParam(m_server, body, "cycle_mask", cycleMaskVal) || getIntParam(m_server, body, "cycleMask", cycleMaskVal)) {
+        if (m_effectMgr) {
+            m_effectMgr->setCycleMask(static_cast<uint16_t>(cycleMaskVal));
         }
     }
 
+    // 3. Effect parameters / Profile update
+    int effectVal = -1;
+    bool hasEffect = getIntParam(m_server, body, "effect", effectVal) ||
+                     getIntParam(m_server, body, "effectIndex", effectVal) ||
+                     getIntParam(m_server, body, "effect_index", effectVal);
+
+    int brightVal = 0;
+    bool hasBright = getIntParam(m_server, body, "brightness", brightVal);
+
     int speedVal = 0;
-    if (getIntParam(m_server, body, "speed", speedVal)) {
-        if (speedVal < 1) speedVal = 1;
-        if (speedVal > 255) speedVal = 255;
-        if (m_effectMgr) m_effectMgr->setSpeed(speedVal);
-    }
+    bool hasSpeed = getIntParam(m_server, body, "speed", speedVal);
 
     int micSensVal = 0;
-    if (getIntParam(m_server, body, "micSensitivity", micSensVal) || getIntParam(m_server, body, "sensitivity", micSensVal)) {
-        if (micSensVal < 1) micSensVal = 1;
-        if (micSensVal > 255) micSensVal = 255;
-        if (m_effectMgr) m_effectMgr->setMicSensitivity(micSensVal);
-        if (m_mic) m_mic->setSensitivity(micSensVal);
+    bool hasMicSens = getIntParam(m_server, body, "micSensitivity", micSensVal) ||
+                      getIntParam(m_server, body, "sensitivity", micSensVal);
+
+    bool inCycleVal = false;
+    bool hasInCycle = getBoolParam(m_server, body, "inCycle", inCycleVal);
+
+    if (m_effectMgr) {
+        uint8_t totalEff = m_effectMgr->getTotalEffects();
+
+        if (hasEffect && effectVal >= 0 && effectVal < totalEff) {
+            // Update individual effect profile if parameters provided
+            if (hasInCycle || hasBright || hasSpeed || hasMicSens) {
+                EffectProfile prof = m_effectMgr->getProfile(effectVal);
+                if (hasInCycle) prof.inCycle = inCycleVal;
+                if (hasBright) prof.brightness = constrain(brightVal, 10, 255);
+                if (hasSpeed) prof.speed = constrain(speedVal, 1, 255);
+                if (hasMicSens) prof.sensitivity = constrain(micSensVal, 1, 255);
+                m_effectMgr->setProfile(effectVal, prof);
+            }
+
+            // If request had "effect": index without profile fields or explicitly switching effect:
+            if (!hasInCycle && !hasBright && !hasSpeed && !hasMicSens) {
+                if (m_matrix) {
+                    m_effectMgr->setEffect(effectVal, *m_matrix);
+                }
+            }
+        } else {
+            // No specific effect target -> apply to active effect
+            uint8_t curEff = m_effectMgr->getCurrentEffectIndex();
+            EffectProfile prof = m_effectMgr->getProfile(curEff);
+            bool profChanged = false;
+
+            if (hasBright) {
+                prof.brightness = constrain(brightVal, 10, 255);
+                m_effectMgr->setBrightness(prof.brightness);
+                profChanged = true;
+            }
+            if (hasSpeed) {
+                prof.speed = constrain(speedVal, 1, 255);
+                m_effectMgr->setSpeed(prof.speed);
+                profChanged = true;
+            }
+            if (hasMicSens) {
+                prof.sensitivity = constrain(micSensVal, 1, 255);
+                m_effectMgr->setMicSensitivity(prof.sensitivity);
+                if (m_mic) m_mic->setSensitivity(prof.sensitivity);
+                profChanged = true;
+            }
+            if (hasInCycle) {
+                prof.inCycle = inCycleVal;
+                profChanged = true;
+            }
+            if (profChanged) {
+                m_effectMgr->setProfile(curEff, prof);
+            }
+        }
     }
 
     // Schedule parameters
@@ -392,6 +464,28 @@ void LampWebServer::handleControl() {
     m_server.send(200, "application/json", "{\"status\":\"ok\"}");
 }
 
+void LampWebServer::handleRadioSwitch() {
+    if (!m_zigbee) {
+        m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"ZigbeeManager unavailable\"}");
+        return;
+    }
+
+    String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
+    String modeStr = "";
+    if (getStringParam(m_server, body, "mode", modeStr)) {
+        if (modeStr == "wifi") {
+            m_zigbee->setMode(RADIO_MODE_WIFI);
+        } else if (modeStr == "zigbee") {
+            m_zigbee->setMode(RADIO_MODE_ZIGBEE);
+        }
+    } else {
+        m_zigbee->toggleMode();
+    }
+
+    String res = "{\"status\":\"ok\",\"radio_mode\":\"" + String(m_zigbee->getModeString()) + "\"}";
+    m_server.send(200, "application/json", res);
+}
+
 void LampWebServer::handleOtaCheck() {
     if (m_ota) {
         m_ota->triggerCheck();
@@ -425,77 +519,9 @@ void LampWebServer::handleWifi() {
     }
 }
 
-void LampWebServer::handleStoreInstalled() {
-    if (m_store) {
-        m_server.send(200, "application/json", m_store->getInstalledJson());
-    } else {
-        m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"Store module unavailable\"}");
-    }
-}
-
-void LampWebServer::handleStoreCatalog() {
-    if (m_store) {
-        String catalog;
-        if (m_store->fetchCatalogJson(catalog)) {
-            m_server.send(200, "application/json", catalog);
-        } else {
-            m_server.send(502, "application/json", "{\"status\":\"error\",\"message\":\"Failed to fetch catalog from GitHub Raw\"}");
-        }
-    } else {
-        m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"Store module unavailable\"}");
-    }
-}
-
-void LampWebServer::handleStoreInstall() {
-    String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
-    String id = "";
-    String url = "";
-    getStringParam(m_server, body, "id", id);
-    getStringParam(m_server, body, "url", url);
-
-    if (id.isEmpty()) {
-        m_server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing effect id\"}");
-        return;
-    }
-
-    if (m_store) {
-        String msg;
-        if (m_store->installEffect(id, url, m_effectMgr, msg)) {
-            // Activate newly installed effect immediately
-            if (m_effectMgr && m_matrix) {
-                uint8_t total = m_effectMgr->getTotalEffects();
-                if (total > 0) {
-                    m_effectMgr->setEffect(total - 1, *m_matrix);
-                }
-            }
-            m_server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"" + msg + "\"}");
-        } else {
-            m_server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"" + msg + "\"}");
-        }
-    } else {
-        m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"Store module unavailable\"}");
-    }
-}
-
-void LampWebServer::handleStoreDelete() {
-    String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
-    String id = "";
-    getStringParam(m_server, body, "id", id);
-
-    if (id.isEmpty()) {
-        m_server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing effect id\"}");
-        return;
-    }
-
-    if (m_store) {
-        if (m_store->deleteEffect(id, m_effectMgr)) {
-            m_server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Effect deleted\"}");
-        } else {
-            m_server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Failed to delete effect\"}");
-        }
-    } else {
-        m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"Store module unavailable\"}");
-    }
+void LampWebServer::handleImuDiag() {
+    String diagJson = m_imu ? m_imu->runDiagnostics() : "{\"error\":\"IMU unavailable\"}";
+    m_server.send(200, "application/json", diagJson);
 }
 
 void LampWebServer::handleNotFound() {

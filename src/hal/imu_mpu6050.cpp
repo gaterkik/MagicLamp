@@ -1,4 +1,5 @@
 #include "imu_mpu6050.h"
+#include <Wire.h>
 #include <math.h>
 
 // MPU-6050 Register Map
@@ -21,6 +22,7 @@ ImuMpu6050::ImuMpu6050(uint8_t sdaPin,
       m_whoAmI(0),
       m_sampleIntervalMs(sampleIntervalMs),
       m_shakeThreshold(shakeThreshold),
+      m_useWire(false),
       m_fallback(true),
       m_consecutiveErrors(0),
       m_lastSampleTime(0),
@@ -311,6 +313,94 @@ bool ImuMpu6050::scanPins() {
 
 bool ImuMpu6050::begin() {
     m_lastAutoScanTime = millis();
+
+    // 1. Primary attempt: pure hardware Wire.begin(m_sdaPin, m_sclPin, 100000) WITHOUT pinMode()
+    Serial.printf("[IMU] Hardware Wire probe on SDA=%d, SCL=%d (100 kHz)...\n", m_sdaPin, m_sclPin);
+    Wire.begin(m_sdaPin, m_sclPin, 100000);
+    delay(10);
+
+    bool wireFound = false;
+    uint8_t detectedAddr = 0;
+    static const uint8_t candidateAddrs[] = { 0x68, 0x69 };
+    for (uint8_t addr : candidateAddrs) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            Wire.beginTransmission(addr);
+            Wire.write(REG_WHO_AM_I);
+            if (Wire.endTransmission(false) == 0) {
+                if (Wire.requestFrom((uint8_t)addr, (size_t)1) == 1) {
+                    uint8_t who = Wire.read();
+                    detectedAddr = addr;
+                    m_whoAmI = who;
+                    wireFound = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (wireFound) {
+        m_i2cAddr = detectedAddr;
+        m_activeSda = m_sdaPin;
+        m_activeScl = m_sclPin;
+        m_useWire = true;
+        m_fallback = false;
+        m_consecutiveErrors = 0;
+
+        // Wake up sensor: write 0x00 to REG_PWR_MGMT_1
+        Wire.beginTransmission(m_i2cAddr);
+        Wire.write(REG_PWR_MGMT_1);
+        Wire.write(0x00);
+        Wire.endTransmission();
+        delay(5);
+
+        // Configure DLPF (~44 Hz: CONFIG = 0x03)
+        Wire.beginTransmission(m_i2cAddr);
+        Wire.write(REG_CONFIG);
+        Wire.write(0x03);
+        Wire.endTransmission();
+
+        // Configure Accel Range (+/- 2g: ACCEL_CONFIG = 0x00)
+        Wire.beginTransmission(m_i2cAddr);
+        Wire.write(REG_ACCEL_CONFIG);
+        Wire.write(0x00);
+        Wire.endTransmission();
+
+        // Initial read
+        int16_t ax = 0, ay = 0, az = 0;
+        if (readRawData(ax, ay, az)) {
+            m_rawAx = static_cast<float>(ax) / 16384.0f;
+            m_rawAy = static_cast<float>(ay) / 16384.0f;
+            m_rawAz = static_cast<float>(az) / 16384.0f;
+            m_gx = m_rawAx;
+            m_gy = m_rawAy;
+            m_gz = m_rawAz;
+            float norm = sqrtf(m_gx * m_gx + m_gy * m_gy + m_gz * m_gz);
+            if (norm > 0.001f) {
+                m_gx /= norm;
+                m_gy /= norm;
+                m_gz /= norm;
+            } else {
+                m_gx = 0.0f;
+                m_gy = -1.0f;
+                m_gz = 0.0f;
+            }
+        }
+
+        snprintf(m_statusStr, sizeof(m_statusStr),
+                 "Online (Hardware Wire, addr:0x%02X, who:0x%02X, SDA:%d, SCL:%d)",
+                 m_i2cAddr, m_whoAmI, m_activeSda, m_activeScl);
+        Serial.printf("[IMU] %s\n", m_statusStr);
+        return true;
+    }
+
+    // No response on Hardware Wire: release the bus and pins cleanly
+    Serial.println(F("[IMU] No ACK on Hardware Wire. Calling Wire.end() and switching to Open-Drain bit-bang..."));
+    Wire.end();
+    delay(10);
+    m_useWire = false;
+
+    // 2. Reserve Open-Drain Bit-Bang scanner
     if (quickProbe()) {
         return true;
     }
@@ -318,6 +408,27 @@ bool ImuMpu6050::begin() {
 }
 
 bool ImuMpu6050::readRawData(int16_t& ax, int16_t& ay, int16_t& az) {
+    if (m_useWire) {
+        Wire.beginTransmission(m_i2cAddr);
+        Wire.write(REG_ACCEL_XOUT_H);
+        if (Wire.endTransmission(false) != 0) {
+            return false;
+        }
+        if (Wire.requestFrom((uint8_t)m_i2cAddr, (size_t)6) != 6) {
+            return false;
+        }
+        int16_t xh = Wire.read();
+        int16_t xl = Wire.read();
+        int16_t yh = Wire.read();
+        int16_t yl = Wire.read();
+        int16_t zh = Wire.read();
+        int16_t zl = Wire.read();
+        ax = static_cast<int16_t>((xh << 8) | xl);
+        ay = static_cast<int16_t>((yh << 8) | yl);
+        az = static_cast<int16_t>((zh << 8) | zl);
+        return true;
+    }
+
     i2cStart();
     if (!i2cWriteByte((m_i2cAddr << 1) | 0)) {
         i2cStop();
@@ -372,6 +483,10 @@ void ImuMpu6050::update() {
         m_consecutiveErrors++;
         if (m_consecutiveErrors >= 5) {
             Serial.println(F("[IMU] WARNING: Too many I2C read errors. Switching to Graceful Fallback mode."));
+            if (m_useWire) {
+                Wire.end();
+                m_useWire = false;
+            }
             m_fallback = true;
             quickProbe();
             m_lastAutoScanTime = now;
@@ -441,3 +556,70 @@ void ImuMpu6050::triggerShake() {
     m_shaken = true;
     m_lastShakeTime = millis();
 }
+
+String ImuMpu6050::runDiagnostics() {
+    String out = "{";
+    out += "\"status\":\"" + String(m_statusStr) + "\",";
+    out += "\"connected\":" + String(isConnected() ? "true" : "false") + ",";
+    out += "\"fallback\":" + String(m_fallback ? "true" : "false") + ",";
+    out += "\"who_am_i\":\"0x" + String(m_whoAmI, HEX) + "\",";
+    out += "\"active_sda\":" + String(m_activeSda) + ",";
+    out += "\"active_scl\":" + String(m_activeScl) + ",";
+    out += "\"gravity\":{\"x\":" + String(m_gx, 3) + ",\"y\":" + String(m_gy, 3) + ",\"z\":" + String(m_gz, 3) + "},";
+
+    // Test Hardware Wire 100kHz
+    if (m_useWire) Wire.end();
+    delay(5);
+    Wire.begin(m_sdaPin, m_sclPin, 100000);
+    delay(10);
+    String addrs100k = "[";
+    bool first = true;
+    for (uint8_t a = 0x08; a <= 0x77; a++) {
+        Wire.beginTransmission(a);
+        if (Wire.endTransmission() == 0) {
+            if (!first) addrs100k += ",";
+            addrs100k += "\"0x" + String(a, HEX) + "\"";
+            first = false;
+        }
+    }
+    addrs100k += "]";
+    out += "\"wire_100kHz_devices\":" + addrs100k + ",";
+
+    // Test Hardware Wire 10kHz
+    Wire.setClock(10000);
+    delay(10);
+    String addrs10k = "[";
+    first = true;
+    for (uint8_t a = 0x08; a <= 0x77; a++) {
+        Wire.beginTransmission(a);
+        if (Wire.endTransmission() == 0) {
+            if (!first) addrs10k += ",";
+            addrs10k += "\"0x" + String(a, HEX) + "\"";
+            first = false;
+        }
+    }
+    addrs10k += "]";
+    out += "\"wire_10kHz_devices\":" + addrs10k + ",";
+
+    Wire.end();
+    delay(5);
+
+    // Line check with pulldown test
+    pinMode(m_sdaPin, INPUT_PULLDOWN);
+    pinMode(m_sclPin, INPUT_PULLDOWN);
+    delayMicroseconds(50);
+    bool sdaExtPullup = (digitalRead(m_sdaPin) == HIGH);
+    bool sclExtPullup = (digitalRead(m_sclPin) == HIGH);
+    pinMode(m_sdaPin, INPUT_PULLUP);
+    pinMode(m_sclPin, INPUT_PULLUP);
+    out += "\"sda_ext_pullup\":" + String(sdaExtPullup ? "true" : "false") + ",";
+    out += "\"scl_ext_pullup\":" + String(sclExtPullup ? "true" : "false");
+
+    out += "}";
+
+    // Re-initialize driver to normal operating state
+    begin();
+
+    return out;
+}
+

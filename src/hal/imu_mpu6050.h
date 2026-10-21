@@ -137,6 +137,12 @@ public:
      */
     uint8_t getWhoAmI() const { return m_whoAmI; }
 
+    /**
+     * @brief Run comprehensive hardware I2C diagnostics on 100 kHz and 10 kHz.
+     * @return JSON string with diagnostics report.
+     */
+    String runDiagnostics();
+
 private:
     uint8_t m_sdaPin;
     uint8_t m_sclPin;
@@ -147,6 +153,7 @@ private:
     uint32_t m_sampleIntervalMs;
     float m_shakeThreshold;
 
+    bool m_useWire;
     bool m_fallback;
     uint8_t m_consecutiveErrors;
     uint32_t m_lastSampleTime;
