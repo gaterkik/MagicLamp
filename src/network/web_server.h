@@ -6,7 +6,6 @@
 class EffectManager;
 class LedMatrix;
 class MicI2S;
-class ImuMpu6050;
 class WiFiManager;
 class OtaGithub;
 class ZigbeeManager;
@@ -22,7 +21,6 @@ class ZigbeeManager;
  * - Radio mode switching (POST /api/radio/switch).
  * - GitHub Silent OTA trigger (POST /api/ota/check).
  * - Direct browser firmware upload via Update.h (POST /api/ota/upload).
- * - IMU hardware diagnostics (GET /api/imu/diag).
  * - Wi-Fi credentials configuration (POST /api/wifi).
  * - Captive Portal redirection when in SoftAP setup mode.
  */
@@ -37,7 +35,6 @@ public:
     void begin(EffectManager* effectMgr,
                LedMatrix* matrix,
                MicI2S* mic,
-               ImuMpu6050* imu,
                WiFiManager* wifi,
                OtaGithub* ota,
                ZigbeeManager* zigbee = nullptr);
@@ -56,7 +53,6 @@ private:
     EffectManager* m_effectMgr;
     LedMatrix* m_matrix;
     MicI2S* m_mic;
-    ImuMpu6050* m_imu;
     WiFiManager* m_wifi;
     OtaGithub* m_ota;
     ZigbeeManager* m_zigbee;
@@ -75,7 +71,6 @@ private:
     void handleRadioSwitch();
     void handleOtaCheck();
     void handleWifi();
-    void handleImuDiag();
     void handleNotFound();
 };
 

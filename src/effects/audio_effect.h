@@ -16,7 +16,7 @@
 class EffectAudioReactive : public Effect {
 public:
     void init(LedMatrix& matrix) override;
-    void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
+    void update(LedMatrix& matrix, const MicI2S& mic) override;
     const char* getName() const override { return "AudioReactive"; }
 
 private:

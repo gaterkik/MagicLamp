@@ -35,6 +35,7 @@ public:
 
     void saveCredentials(const String& ssid, const String& pass);
     void resetCredentials();
+    void resetSettings() { resetCredentials(); }
 
     bool getLocalTime(struct tm *info) const;
     String getFormattedTime() const;

@@ -284,32 +284,32 @@ void ZigbeeManager::handleZigbeeColor(uint8_t hue, uint8_t saturation, EffectMan
         return;
     }
 
-    // Map 360-degree Alice color spectrum (0..255) to 16 built-in effects
+    // Map 360-degree Alice color spectrum (0..255) to 15 built-in effects
     uint8_t targetEffect = 0;
     if (hue < 16) {
         targetEffect = 2;   // Red -> Fire
     } else if (hue < 32) {
         targetEffect = 1;   // Orange -> DawnDusk
     } else if (hue < 50) {
-        targetEffect = 7;   // Amber/Gold -> SandHourglass
+        targetEffect = 8;   // Amber/Gold -> Fireflies
     } else if (hue < 70) {
-        targetEffect = 9;   // Yellow -> Fireflies
+        targetEffect = 5;   // Yellow -> LorenzAttractor
     } else if (hue < 100) {
         targetEffect = 4;   // Lime/Green -> GameOfLife
     } else if (hue < 130) {
-        targetEffect = 11;  // Emerald -> MatrixRain
+        targetEffect = 10;  // Emerald -> MatrixRain
     } else if (hue < 155) {
-        targetEffect = 10;  // Cyan/Teal -> Aurora
+        targetEffect = 9;   // Cyan/Teal -> Aurora
     } else if (hue < 175) {
         targetEffect = 6;   // Sky Blue -> Metaballs
     } else if (hue < 200) {
-        targetEffect = 12;  // Blue -> LavaLamp
+        targetEffect = 11;  // Blue -> LavaLamp
     } else if (hue < 220) {
-        targetEffect = 15;  // Violet -> CyberPulse
+        targetEffect = 14;  // Violet -> CyberPulse
     } else if (hue < 235) {
-        targetEffect = 13;  // Purple/Magenta -> Vortex
+        targetEffect = 12;  // Purple/Magenta -> Vortex
     } else if (hue < 248) {
-        targetEffect = 14;  // Pink/Crimson -> Fireworks
+        targetEffect = 13;  // Pink/Crimson -> Fireworks
     } else {
         targetEffect = 3;   // Red-Pink -> PerlinNoise
     }

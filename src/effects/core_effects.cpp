@@ -14,7 +14,7 @@ void EffectNightlight::init(LedMatrix& matrix) {
     matrix.clear(false);
 }
 
-void EffectNightlight::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
+void EffectNightlight::update(LedMatrix& matrix, const MicI2S& mic) {
     uint32_t now = millis();
     // Gentle breathing modulation (~4 second cycle)
     uint8_t breath = sin8(static_cast<uint8_t>(now / 16));
@@ -71,7 +71,7 @@ void EffectDawnDusk::init(LedMatrix& matrix) {
     matrix.clear(false);
 }
 
-void EffectDawnDusk::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
+void EffectDawnDusk::update(LedMatrix& matrix, const MicI2S& mic) {
     uint32_t now = millis();
     time_t rawtime;
     time(&rawtime);
@@ -358,7 +358,7 @@ void EffectFire::stepSimulation() {
     }
 }
 
-void EffectFire::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
+void EffectFire::update(LedMatrix& matrix, const MicI2S& mic) {
     uint32_t now = millis();
     // Simulation step interval scaled by m_speed (default 128 -> ~50ms)
     uint32_t stepInterval = map(m_speed, 1, 255, 120, 25);
@@ -447,7 +447,7 @@ void EffectPerlinNoise::init(LedMatrix& matrix) {
     matrix.clear(false);
 }
 
-void EffectPerlinNoise::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
+void EffectPerlinNoise::update(LedMatrix& matrix, const MicI2S& mic) {
     uint32_t now = millis();
     float dt = (now - m_lastPerlinTime) / 1000.0f;
     if (dt <= 0.0f || dt > 0.1f) dt = 0.016f;
@@ -503,7 +503,7 @@ void EffectFireflies::init(LedMatrix& matrix) {
     }
 }
 
-void EffectFireflies::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
+void EffectFireflies::update(LedMatrix& matrix, const MicI2S& mic) {
     uint32_t now = millis();
     float dt = (now - m_lastUpdateTime) / 1000.0f;
     if (dt > 0.1f) dt = 0.016f;

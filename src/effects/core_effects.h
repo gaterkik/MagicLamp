@@ -14,7 +14,7 @@
 class EffectNightlight : public Effect {
 public:
     void init(LedMatrix& matrix) override;
-    void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
+    void update(LedMatrix& matrix, const MicI2S& mic) override;
     const char* getName() const override { return "Nightlight"; }
     void setColorTemp(uint8_t temp) { m_colorTemp = temp; }
     uint8_t getColorTemp() const { return m_colorTemp; }
@@ -26,7 +26,7 @@ private:
 class EffectDawnDusk : public Effect {
 public:
     void init(LedMatrix& matrix) override;
-    void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
+    void update(LedMatrix& matrix, const MicI2S& mic) override;
     const char* getName() const override { return "DawnDusk"; }
     void setSchedule(const ScheduleConfig* schedule) { m_schedule = schedule; }
 
@@ -38,7 +38,7 @@ private:
 class EffectFire : public Effect {
 public:
     void init(LedMatrix& matrix) override;
-    void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
+    void update(LedMatrix& matrix, const MicI2S& mic) override;
     const char* getName() const override { return "Fire"; }
 
 private:
@@ -66,7 +66,7 @@ private:
 class EffectPerlinNoise : public Effect {
 public:
     void init(LedMatrix& matrix) override;
-    void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
+    void update(LedMatrix& matrix, const MicI2S& mic) override;
     const char* getName() const override { return "PerlinNoise"; }
 
 private:
@@ -80,7 +80,7 @@ private:
 class EffectFireflies : public Effect {
 public:
     void init(LedMatrix& matrix) override;
-    void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
+    void update(LedMatrix& matrix, const MicI2S& mic) override;
     const char* getName() const override { return "Fireflies"; }
 
 private:

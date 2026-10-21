@@ -6,13 +6,13 @@
  * @file webui_html.h
  * @brief Self-contained Single Page Application WebUI stored in Flash memory (PROGMEM).
  *
- * MagicLamp v0.8.0 WebUI:
+ * MagicLamp v0.9.0 WebUI:
  * - Modern Apple-inspired dark mode UI.
- * - Accordion UI for all 16 built-in native effects with individual NVS profiles.
+ * - Accordion UI for all 15 built-in native effects with individual NVS profiles.
  * - Checkboxes for button cycle inclusion (inCycle / cycle_mask).
  * - Dynamic parameter sliders (Brightness, Speed, Mic Sensitivity).
- * - Schedule settings (Dawn sunrise alarm & Dusk sleep timer) inside Dawn/Dusk card.
- * - Live ESP32-C6 Telemetry with interactive GY-521 I2C Bus Diagnostic modal.
+ * - Schedule settings (Dawn sunrise alarm & Dusk sleep timer) inside schedule card.
+ * - Live ESP32-C6 Telemetry.
  * - Radio Mode switcher (Wi-Fi <-> Zigbee) with status indicator.
  * - GitHub Silent OTA and Direct Browser Firmware Upload.
  * - Wi-Fi network configuration.
@@ -591,82 +591,6 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       margin-top: 6px;
     }
 
-    /* Modal for IMU Diagnostics */
-    .modal-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.7);
-      backdrop-filter: blur(6px);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      z-index: 9999;
-      padding: 16px;
-    }
-    .modal-overlay.open {
-      display: flex;
-    }
-    .modal-box {
-      background: #0f172a;
-      border: 1px solid #334155;
-      border-radius: 16px;
-      width: 100%;
-      max-width: 580px;
-      max-height: 85vh;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.8);
-    }
-    .modal-header {
-      padding: 16px 20px;
-      border-bottom: 1px solid #1e293b;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .modal-header h3 {
-      font-size: 1.05rem;
-      color: var(--text);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .modal-close {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      font-size: 1.4rem;
-      cursor: pointer;
-      line-height: 1;
-    }
-    .modal-body {
-      padding: 18px 20px;
-      overflow-y: auto;
-      font-size: 0.86rem;
-      line-height: 1.5;
-      color: #cbd5e1;
-    }
-    .diag-pre {
-      background: #080d19;
-      border: 1px solid #1e293b;
-      border-radius: 8px;
-      padding: 12px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 0.8rem;
-      color: #38bdf8;
-      overflow-x: auto;
-      white-space: pre-wrap;
-    }
-    .modal-footer {
-      padding: 12px 20px;
-      border-top: 1px solid #1e293b;
-      display: flex;
-      justify-content: flex-end;
-    }
 
     footer {
       text-align: center;
@@ -684,7 +608,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="logo-icon">&#9733;</div>
         <div>
           <h1>MagicLamp</h1>
-          <div style="font-size:0.75rem; color:var(--text-muted);">ESP32-C6 Interactive Light v0.8.2</div>
+          <div style="font-size:0.75rem; color:var(--text-muted);">ESP32-C6 Interactive Light v0.9.0</div>
         </div>
       </div>
       <div class="header-badges">
@@ -820,7 +744,6 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <section class="card">
       <div class="card-title">
         <span>&#128202; Телеметрия ESP32-C6</span>
-        <button class="btn btn-secondary btn-sm" onclick="runImuDiag()">&#128269; Тест датчика</button>
       </div>
       <div class="telem-grid">
         <div class="telem-item">
@@ -848,12 +771,8 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="telem-val"><span id="telem-heap">--</span> KB</div>
         </div>
         <div class="telem-item">
-          <div class="telem-label">Гироскоп GY-6500 / GY-521</div>
-          <div class="telem-val" style="font-size:0.82rem;" id="telem-imu">--</div>
-        </div>
-        <div class="telem-item">
           <div class="telem-label">Версия</div>
-          <div class="telem-val" id="telem-ver">v0.8.2</div>
+          <div class="telem-val" id="telem-ver">v0.9.0</div>
         </div>
       </div>
     </section>
@@ -864,7 +783,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       
       <div class="ota-row">
         <div>
-          <div class="ota-info">Текущая версия: <strong id="ota-cur-ver">v0.8.2</strong> | Последняя на GitHub: <strong id="ota-latest-ver">--</strong></div>
+          <div class="ota-info">Текущая версия: <strong id="ota-cur-ver">v0.9.0</strong> | Последняя на GitHub: <strong id="ota-latest-ver">--</strong></div>
           <div class="ota-info" style="margin-top:4px;">Статус проверки: <span id="ota-status" style="color:var(--primary);">Idle</span></div>
         </div>
         <button id="btn-ota-check" class="btn btn-secondary" onclick="triggerGithubOta()">
@@ -908,26 +827,8 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     </footer>
   </div>
 
-  <!-- IMU DIAGNOSTIC MODAL -->
-  <div id="modal-imu" class="modal-overlay" onclick="closeImuModal(event)">
-    <div class="modal-box" onclick="event.stopPropagation()">
-      <div class="modal-header">
-        <h3>&#128269; Диагностика I2C шины и GY-6500 / GY-521</h3>
-        <button class="modal-close" onclick="closeImuModal()">&times;</button>
-      </div>
-      <div class="modal-body">
-        <div id="imu-diag-summary" style="margin-bottom:12px; font-weight:600;">Выполняется опрос шины I2C...</div>
-        <pre class="diag-pre" id="imu-diag-output">Тестирование Bit-Bang I2C с Clock Stretching и сканирование регистров MPU-6500 / MPU-6050...</pre>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="runImuDiag()">&#8635; Повторить тест</button>
-        <button class="btn" style="margin-left:8px;" onclick="closeImuModal()">Закрыть</button>
-      </div>
-    </div>
-  </div>
-
   <script>
-    // 16 built-in native effects metadata
+    // 15 built-in native effects metadata
     const EFFECTS_META = [
       { id: 0, name: "Ночник", sub: "Nightlight (2700K)", icon: "🌙", dynamic: false, audio: false, schedule: false },
       { id: 1, name: "Рассвет / Закат", sub: "Dawn / Dusk (1900K amber)", icon: "🌅", dynamic: false, audio: false, schedule: false },
@@ -936,15 +837,14 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       { id: 4, name: "Игра «Жизнь»", sub: "Conway's Cellular Automata", icon: "🧬", dynamic: true, audio: false, schedule: false },
       { id: 5, name: "Аттрактор Лоренца", sub: "Lorenz Strange Attractor", icon: "🌀", dynamic: true, audio: false, schedule: false },
       { id: 6, name: "Метаболы", sub: "Metaballs 5-Spheres Field", icon: "🫧", dynamic: true, audio: false, schedule: false },
-      { id: 7, name: "Песочные часы", sub: "Sand Hourglass & Gravity", icon: "⏳", dynamic: false, audio: false, schedule: false },
-      { id: 8, name: "Реакция на звук", sub: "Audio Spectrum FFT 16-bands", icon: "🎵", dynamic: false, audio: true, schedule: false },
-      { id: 9, name: "Светлячки", sub: "Fireflies 15-Particles Flocking", icon: "✨", dynamic: true, audio: false, schedule: false },
-      { id: 10, name: "Северное сияние", sub: "Aurora Borealis Curtains", icon: "🌌", dynamic: true, audio: false, schedule: false },
-      { id: 11, name: "Матрица", sub: "Matrix Rain Digital Cascade", icon: "💻", dynamic: true, audio: false, schedule: false },
-      { id: 12, name: "Лава-лампа", sub: "Lava Lamp Thermal Convection", icon: "🏺", dynamic: true, audio: false, schedule: false },
-      { id: 13, name: "Галактическая спираль", sub: "Vortex Spiral Arms", icon: "🪐", dynamic: true, audio: false, schedule: false },
-      { id: 14, name: "Фейерверк", sub: "Fireworks Particle Explosion", icon: "🎆", dynamic: false, audio: false, schedule: false },
-      { id: 15, name: "Киберпанк-пульс", sub: "Cyber Pulse Neon Shader", icon: "⚡", dynamic: true, audio: true, schedule: false }
+      { id: 7, name: "Реакция на звук", sub: "Audio Spectrum FFT 16-bands", icon: "🎵", dynamic: false, audio: true, schedule: false },
+      { id: 8, name: "Светлячки", sub: "Fireflies 15-Particles Flocking", icon: "✨", dynamic: true, audio: false, schedule: false },
+      { id: 9, name: "Северное сияние", sub: "Aurora Borealis Curtains", icon: "🌌", dynamic: true, audio: false, schedule: false },
+      { id: 10, name: "Матрица", sub: "Matrix Rain Digital Cascade", icon: "💻", dynamic: true, audio: false, schedule: false },
+      { id: 11, name: "Лава-лампа", sub: "Lava Lamp Thermal Convection", icon: "🏺", dynamic: true, audio: false, schedule: false },
+      { id: 12, name: "Галактическая спираль", sub: "Vortex Spiral Arms", icon: "🪐", dynamic: true, audio: false, schedule: false },
+      { id: 13, name: "Фейерверк", sub: "Fireworks Particle Explosion", icon: "🎆", dynamic: false, audio: false, schedule: false },
+      { id: 14, name: "Киберпанк-пульс", sub: "Cyber Pulse Neon Shader", icon: "⚡", dynamic: true, audio: false, schedule: false }
     ];
 
     let currentEffectId = 0;
@@ -952,7 +852,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     let currentRadioMode = "wifi";
     let isDragging = false;
     let isScheduleEnabled = false;
-    let cycleMask = 0xFFFF;
+    let cycleMask = 0x7FFF;
     let effectsProfiles = {};
 
     function formatUptime(seconds) {
@@ -1311,39 +1211,6 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
-    // IMU Diagnostic Modal
-    async function runImuDiag() {
-      const modal = document.getElementById('modal-imu');
-      const sum = document.getElementById('imu-diag-summary');
-      const out = document.getElementById('imu-diag-output');
-
-      modal.classList.add('open');
-      sum.innerHTML = '<span style="color:var(--primary);">&#8635; Тестирование шины I2C (Bit-Bang 50kHz)...</span>';
-      out.innerText = 'Опрос сенсора MPU-6500 / MPU-6050 и проверка GPIO5/GPIO6...';
-
-      try {
-        const res = await fetch('/api/imu/diag');
-        const data = await res.json();
-        const formatted = JSON.stringify(data, null, 2);
-        out.innerText = formatted;
-
-        if (data.status && data.status.includes('Online')) {
-          const sType = data.sensor_type || ((data.who_am_i === '0x70') ? 'GY-6500 (MPU-6500)' : 'GY-521 (MPU-6050)');
-          sum.innerHTML = `<span style="color:var(--success);">&#10004; ${sType} подключен и готов к работе! (${data.who_am_i || ''})</span>`;
-        } else {
-          sum.innerHTML = '<span style="color:var(--warning);">&#9888; ' + (data.status || 'Сенсор не найден на шине') + ' (GPIO5: ' + (data.GPIO5_idle || '?') + ', GPIO6: ' + (data.GPIO6_idle || '?') + ')</span>';
-        }
-      } catch (err) {
-        sum.innerHTML = '<span style="color:var(--danger);">&#10008; Ошибка связи с API диагностики!</span>';
-        out.innerText = 'Сбой сетевого запроса к /api/imu/diag: ' + err;
-      }
-    }
-
-    function closeImuModal(e) {
-      if (e && e.target !== document.getElementById('modal-imu')) return;
-      document.getElementById('modal-imu').classList.remove('open');
-    }
-
     // Periodic status poll
     async function fetchStatus() {
       try {
@@ -1493,11 +1360,10 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('telem-ip').innerText = data.ip || '--';
         document.getElementById('telem-uptime').innerText = formatUptime(data.uptime || 0);
         document.getElementById('telem-heap').innerText = data.freeHeap || '--';
-        document.getElementById('telem-imu').innerText = data.imuStatus || '--';
-        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.8.2');
+        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.9.0');
 
         // OTA info
-        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.8.2');
+        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.9.0');
         document.getElementById('ota-latest-ver').innerText = data.latestVersion ? ('v' + data.latestVersion) : 'не проверялась';
         document.getElementById('ota-status').innerText = data.otaStatus || 'Idle';
 

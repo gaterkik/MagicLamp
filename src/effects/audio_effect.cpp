@@ -10,7 +10,7 @@ void EffectAudioReactive::init(LedMatrix& matrix) {
     matrix.clear(false);
 }
 
-void EffectAudioReactive::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
+void EffectAudioReactive::update(LedMatrix& matrix, const MicI2S& mic) {
     // Check if bass beat detector fired or loud sound/clap detected
     bool beat = const_cast<MicI2S&>(mic).isBeat();
     float peak = mic.getPeak();

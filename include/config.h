@@ -43,13 +43,6 @@
 #define BUTTON_HOLD_INTERVAL_MS 40
 #define BUTTON_FACTORY_RESET_MS 5000
 
-/// GY-521 (MPU-6050) I2C Pins and Parameters
-#define PIN_I2C_SDA             6
-#define PIN_I2C_SCL             5
-#define MPU6050_I2C_ADDR        0x68
-#define IMU_SAMPLE_INTERVAL_MS  25      // 40 Hz polling rate
-#define IMU_SHAKE_THRESHOLD     1.8f    // G threshold for shake detection
-
 /// INMP441 I2S Digital MEMS Microphone (Standard Mode RX)
 #define PIN_MIC_SCK             18  // BCLK (Serial Clock)
 #define PIN_MIC_WS              19  // LRCLK (Word Select)
@@ -74,7 +67,9 @@
 // Effects & Storage Parameters
 // =============================================================================
 
-#define NUM_CORE_EFFECTS        16
+#define TOTAL_EFFECTS           15
+#define NUM_CORE_EFFECTS        15
+#define DEFAULT_CYCLE_MASK      0x7FFF
 #define NVS_SAVE_DELAY_MS       3000
 #define FADE_DURATION_MS        350
 #define DEFAULT_BRIGHTNESS      128

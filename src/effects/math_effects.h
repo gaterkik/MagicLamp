@@ -5,16 +5,15 @@
 /**
  * @file math_effects.h
  * @brief Mathematical and physical simulation effects on 16x16 cylinder:
- * 4. EffectGameOfLife (Conway's Life with cylinder toroidal topology & IMU shake re-seed)
+ * 4. EffectGameOfLife (Conway's Life with cylinder toroidal topology & auto-reseed)
  * 5. EffectLorenzAttractor (3D Chaotic attractor projected on cylinder with fading trail)
  * 6. EffectMetaballs (5 elastic metaballs with seamless circular distance metric)
- * 7. EffectSandHourglass (Granular physics with GY-521 3D gravity vector & shake dispersal)
  */
 
 class EffectGameOfLife : public Effect {
 public:
     void init(LedMatrix& matrix) override;
-    void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
+    void update(LedMatrix& matrix, const MicI2S& mic) override;
     const char* getName() const override { return "GameOfLife"; }
 
 private:
@@ -44,7 +43,7 @@ private:
 class EffectLorenzAttractor : public Effect {
 public:
     void init(LedMatrix& matrix) override;
-    void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
+    void update(LedMatrix& matrix, const MicI2S& mic) override;
     const char* getName() const override { return "LorenzAttractor"; }
 
 private:
@@ -56,7 +55,7 @@ private:
 class EffectMetaballs : public Effect {
 public:
     void init(LedMatrix& matrix) override;
-    void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
+    void update(LedMatrix& matrix, const MicI2S& mic) override;
     const char* getName() const override { return "Metaballs"; }
 
 private:
@@ -66,19 +65,4 @@ private:
     float m_vx[NUM_BALLS];
     float m_vy[NUM_BALLS];
     uint8_t m_colorOffset = 0;
-};
-
-class EffectSandHourglass : public Effect {
-public:
-    void init(LedMatrix& matrix) override;
-    void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) override;
-    const char* getName() const override { return "SandHourglass"; }
-
-private:
-    // 0 = empty, 1..255 = particle color index/hue
-    uint8_t m_grid[MATRIX_HEIGHT][MATRIX_WIDTH];
-    uint32_t m_lastPhysTime = 0;
-
-    void updatePhysics(const ImuMpu6050& imu);
-    void scatterSand();
 };

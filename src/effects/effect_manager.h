@@ -4,15 +4,22 @@
 #include <Preferences.h>
 #include "config.h"
 #include "hal/led_matrix.h"
-#include "hal/imu_mpu6050.h"
 #include "hal/mic_i2s.h"
 
+#ifndef TOTAL_EFFECTS
+#define TOTAL_EFFECTS 15
+#endif
+
 #ifndef NUM_CORE_EFFECTS
-#define NUM_CORE_EFFECTS 16
+#define NUM_CORE_EFFECTS 15
 #endif
 
 #ifndef MAX_TOTAL_EFFECTS
-#define MAX_TOTAL_EFFECTS 16
+#define MAX_TOTAL_EFFECTS 15
+#endif
+
+#ifndef DEFAULT_CYCLE_MASK
+#define DEFAULT_CYCLE_MASK 0x7FFF
 #endif
 
 #ifndef NVS_SAVE_DELAY_MS
@@ -31,7 +38,7 @@
  * @file effect_manager.h
  * @brief Base Effect class and EffectManager driver with NVS persistence for MagicLamp.
  *
- * Implements 16 built-in native effects (0..15):
+ * Implements 15 built-in native effects (0..14):
  *  0: Nightlight
  *  1: DawnDusk
  *  2: Fire
@@ -39,21 +46,20 @@
  *  4: GameOfLife
  *  5: LorenzAttractor
  *  6: Metaballs
- *  7: SandHourglass
- *  8: AudioReactive
- *  9: Fireflies
- * 10: Aurora
- * 11: MatrixRain
- * 12: LavaLamp
- * 13: Vortex
- * 14: Fireworks
- * 15: CyberPulse
+ *  7: AudioReactive
+ *  8: Fireflies
+ *  9: Aurora
+ * 10: MatrixRain
+ * 11: LavaLamp
+ * 12: Vortex
+ * 13: Fireworks
+ * 14: CyberPulse
  *
  * UX features:
  * - 500 ms seamless crossfade buffer blending between effects.
  * - 600 ms curtain wave for lamp power on (0..15) and power off (15..0).
- * - Individual NVS profiles for all 16 effects (brightness, speed, sensitivity, inCycle).
- * - cycle_mask bitmask (uint16_t, default 0xFFFF) for circular button switching.
+ * - Individual NVS profiles for all 15 effects (brightness, speed, sensitivity, inCycle).
+ * - cycle_mask bitmask (uint16_t, default 0x7FFF) for circular button switching.
  * - Melatonin-safe amber spectrum (B = 0) for DawnDusk inDusk mode.
  */
 
@@ -70,10 +76,9 @@ public:
     /**
      * @brief Render one frame of the effect (~60 FPS non-blocking).
      * @param matrix Reference to LedMatrix.
-     * @param imu Reference to ImuMpu6050 driver for physical orientation/shake.
      * @param mic Reference to MicI2S driver for sound/music reactivity.
      */
-    virtual void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) = 0;
+    virtual void update(LedMatrix& matrix, const MicI2S& mic) = 0;
 
     /**
      * @brief Get human-readable effect name.
@@ -143,13 +148,12 @@ public:
     /**
      * @brief Non-blocking animation and NVS persistence update. Call in loop().
      * @param matrix Reference to LedMatrix driver.
-     * @param imu Reference to ImuMpu6050 driver.
      * @param mic Reference to MicI2S driver.
      */
-    void update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic);
+    void update(LedMatrix& matrix, const MicI2S& mic);
 
     /**
-     * @brief Switch to the next enabled effect in circular order (0..15 -> 0) filtering by cycle_mask.
+     * @brief Switch to the next enabled effect in circular order (0..14 -> 0) filtering by cycle_mask.
      * @param matrix Reference to LedMatrix driver.
      */
     void nextEffect(LedMatrix& matrix);
@@ -161,7 +165,7 @@ public:
     void prevEffect(LedMatrix& matrix);
 
     /**
-     * @brief Set specific effect by index (0..15) with 500 ms crossfade.
+     * @brief Set specific effect by index (0..14) with 500 ms crossfade.
      * @param index Effect index.
      * @param matrix Reference to LedMatrix driver.
      */
@@ -240,7 +244,7 @@ public:
     void toggleDimmerDirection();
 
     /**
-     * @brief Get index of currently active effect (0..15).
+     * @brief Get index of currently active effect (0..14).
      */
     uint8_t getCurrentEffectIndex() const { return m_currentEffectIndex; }
 
@@ -255,7 +259,7 @@ public:
     bool isNvsDirty() const { return m_nvsDirty; }
 
     /**
-     * @brief Get total number of active effects (16).
+     * @brief Get total number of active effects (15).
      */
     uint8_t getTotalEffects() const { return NUM_CORE_EFFECTS; }
 
@@ -292,7 +296,7 @@ public:
     void setProfile(uint8_t index, const EffectProfile& prof);
 
     /**
-     * @brief Get button cycle bitmask (16 bits for effects 0..15).
+     * @brief Get button cycle bitmask (15 bits for effects 0..14).
      */
     uint16_t getCycleMask() const { return m_cycleMask; }
 

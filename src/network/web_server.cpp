@@ -4,7 +4,6 @@
 #include "effects/effect_manager.h"
 #include "hal/led_matrix.h"
 #include "hal/mic_i2s.h"
-#include "hal/imu_mpu6050.h"
 #include "wifi_manager.h"
 #include "ota_github.h"
 #include "zigbee_manager.h"
@@ -15,7 +14,6 @@ LampWebServer::LampWebServer()
       m_effectMgr(nullptr),
       m_matrix(nullptr),
       m_mic(nullptr),
-      m_imu(nullptr),
       m_wifi(nullptr),
       m_ota(nullptr),
       m_zigbee(nullptr),
@@ -33,14 +31,12 @@ void LampWebServer::noteHttpActivity() {
 void LampWebServer::begin(EffectManager* effectMgr,
                           LedMatrix* matrix,
                           MicI2S* mic,
-                          ImuMpu6050* imu,
                           WiFiManager* wifi,
                           OtaGithub* ota,
                           ZigbeeManager* zigbee) {
     m_effectMgr = effectMgr;
     m_matrix = matrix;
     m_mic = mic;
-    m_imu = imu;
     m_wifi = wifi;
     m_ota = ota;
     m_zigbee = zigbee;
@@ -170,9 +166,6 @@ void LampWebServer::registerRoutes() {
     m_server.on("/api/ota/check", HTTP_POST, [this]() { handleOtaCheck(); });
     m_server.on("/api/wifi", HTTP_POST, [this]() { handleWifi(); });
 
-    // IMU Hardware Diagnostics API
-    m_server.on("/api/imu/diag", HTTP_GET, [this]() { handleImuDiag(); });
-
     // Browser OTA Upload Handler via Update.h
     m_server.on("/api/ota/upload", HTTP_POST, [this]() {
         noteHttpActivity();
@@ -269,7 +262,6 @@ void LampWebServer::handleStatus() {
     bool isAp = m_wifi ? m_wifi->isApMode() : false;
     bool isConnected = m_wifi ? m_wifi->isConnected() : false;
 
-    const char* imuStatus = m_imu ? m_imu->getStatus() : "Not Found (No IMU instance)";
     const char* otaStatus = m_ota ? m_ota->getLastStatus() : "Idle";
     const char* latestVer = m_ota ? m_ota->getLatestVersion() : "";
     int otaProg = m_ota ? m_ota->getProgress() : 0;
@@ -353,8 +345,6 @@ void LampWebServer::handleStatus() {
                      ",\"isConnected\":" + String(isConnected ? "true" : "false") +
                      ",\"uptime\":" + String((unsigned long)uptimeSec) +
                      ",\"freeHeap\":" + String((unsigned long)freeHeapKb) +
-                     ",\"imuStatus\":\"" + String(imuStatus) + "\"" +
-                     ",\"imu\":\"" + String(imuStatus) + "\"" +
                      ",\"version\":\"" + String(FIRMWARE_VERSION) + "\"" +
                      ",\"otaStatus\":\"" + String(otaStatus) + "\"" +
                      ",\"latestVersion\":\"" + String(latestVer) + "\"" +
@@ -752,12 +742,6 @@ void LampWebServer::handleWifi() {
     } else {
         m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"WiFiManager unavailable\"}");
     }
-}
-
-void LampWebServer::handleImuDiag() {
-    noteHttpActivity();
-    String diagJson = m_imu ? m_imu->runDiagnostics() : "{\"error\":\"IMU unavailable\"}";
-    m_server.send(200, "application/json", diagJson);
 }
 
 void LampWebServer::handleNotFound() {

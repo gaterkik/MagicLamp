@@ -237,15 +237,8 @@ void EffectGameOfLife::step(uint32_t now) {
     m_historyIdx = (m_historyIdx + 1) % 8;
 }
 
-void EffectGameOfLife::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
+void EffectGameOfLife::update(LedMatrix& matrix, const MicI2S& mic) {
     uint32_t now = millis();
-
-    // Physical shake triggers instant re-seeding of the entire colony
-    if (const_cast<ImuMpu6050&>(imu).isShaken()) {
-        seedRandom();
-        m_lastStepTime = now;
-        m_stagnantSince = 0;
-    }
 
     // Step evolution interval scaled by speed (400 ms at speed 1 to 40 ms at speed 255)
     uint32_t delayMs = 400 - static_cast<uint32_t>(m_speed - 1) * (400 - 40) / 254;
@@ -283,7 +276,7 @@ void EffectLorenzAttractor::init(LedMatrix& matrix) {
     matrix.clear(false);
 }
 
-void EffectLorenzAttractor::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
+void EffectLorenzAttractor::update(LedMatrix& matrix, const MicI2S& mic) {
     // Gentle persistence trail
     matrix.fadeToBlackBy(36);
 
@@ -333,7 +326,7 @@ void EffectMetaballs::init(LedMatrix& matrix) {
     matrix.clear(false);
 }
 
-void EffectMetaballs::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
+void EffectMetaballs::update(LedMatrix& matrix, const MicI2S& mic) {
     float speedMult = static_cast<float>(m_speed) / 128.0f;
 
     // Move metaball centers scaled by speed
@@ -372,136 +365,6 @@ void EffectMetaballs::update(LedMatrix& matrix, const ImuMpu6050& imu, const Mic
             uint8_t bri = static_cast<uint8_t>(fminf(255.0f, potential * 70.0f));
             uint8_t hue = static_cast<uint8_t>(potential * 55.0f + m_colorOffset);
             matrix.setPixel(x, y, CHSV(hue, 230, bri));
-        }
-    }
-}
-
-// =============================================================================
-// 7: EffectSandHourglass (Granular physics with GY-521 3D gravity vector)
-// =============================================================================
-
-void EffectSandHourglass::init(LedMatrix& matrix) {
-    memset(m_grid, 0, sizeof(m_grid));
-    // Fill lower 6 rows (~96 sand grains) with glowing multi-tonal sand colors
-    for (int y = 0; y < 6; y++) {
-        for (int x = 0; x < MATRIX_WIDTH; x++) {
-            // Assign varying hues: golden, amber, ruby, turquoise
-            uint8_t hue = 25 + (x * 4 + y * 8) % 35;
-            m_grid[y][x] = hue ? hue : 1;
-        }
-    }
-    m_lastPhysTime = millis();
-    matrix.clear(false);
-}
-
-void EffectSandHourglass::scatterSand() {
-    // Scatter grains randomly across matrix on shake
-    uint8_t grains[NUM_LEDS];
-    int count = 0;
-    for (int y = 0; y < MATRIX_HEIGHT; y++) {
-        for (int x = 0; x < MATRIX_WIDTH; x++) {
-            if (m_grid[y][x]) {
-                grains[count++] = m_grid[y][x];
-            }
-        }
-    }
-
-    memset(m_grid, 0, sizeof(m_grid));
-    for (int i = 0; i < count; i++) {
-        int rx = random8(MATRIX_WIDTH);
-        int ry = random8(MATRIX_HEIGHT);
-        while (m_grid[ry][rx] != 0) {
-            rx = random8(MATRIX_WIDTH);
-            ry = random8(MATRIX_HEIGHT);
-        }
-        m_grid[ry][rx] = grains[i];
-    }
-}
-
-void EffectSandHourglass::updatePhysics(const ImuMpu6050& imu) {
-    float gx = imu.getGx();
-    float gy = imu.getGy();
-
-    // Determine fall directions based on 3D gravity vector:
-    // If gy > 0.15: inverted lamp -> particles fall upwards toward Y=15
-    // If gy <= 0.15: upright lamp -> particles fall downwards toward Y=0
-    bool fallUp = (gy > 0.15f);
-
-    // Lateral drift along X ring based on tilt
-    int lateralDir = 0;
-    if (gx > 0.20f) lateralDir = 1;
-    else if (gx < -0.20f) lateralDir = -1;
-
-    if (!fallUp) {
-        // Fall down towards Y = 0
-        for (int y = 1; y < MATRIX_HEIGHT; y++) {
-            for (int x = 0; x < MATRIX_WIDTH; x++) {
-                if (m_grid[y][x]) {
-                    uint8_t particle = m_grid[y][x];
-                    // 1. Direct fall straight down
-                    if (m_grid[y - 1][x] == 0) {
-                        m_grid[y][x] = 0;
-                        m_grid[y - 1][x] = particle;
-                    } else {
-                        // 2. Diagonal slide down slope
-                        int slideX = (lateralDir != 0) ? wrapX(x + lateralDir) : (random8(2) ? wrapX(x - 1) : wrapX(x + 1));
-                        if (m_grid[y - 1][slideX] == 0) {
-                            m_grid[y][x] = 0;
-                            m_grid[y - 1][slideX] = particle;
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        // Inverted: fall up towards Y = 15
-        for (int y = MATRIX_HEIGHT - 2; y >= 0; y--) {
-            for (int x = 0; x < MATRIX_WIDTH; x++) {
-                if (m_grid[y][x]) {
-                    uint8_t particle = m_grid[y][x];
-                    // 1. Direct fall straight up
-                    if (m_grid[y + 1][x] == 0) {
-                        m_grid[y][x] = 0;
-                        m_grid[y + 1][x] = particle;
-                    } else {
-                        // 2. Diagonal slide up slope
-                        int slideX = (lateralDir != 0) ? wrapX(x + lateralDir) : (random8(2) ? wrapX(x - 1) : wrapX(x + 1));
-                        if (m_grid[y + 1][slideX] == 0) {
-                            m_grid[y][x] = 0;
-                            m_grid[y + 1][slideX] = particle;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-void EffectSandHourglass::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
-    uint32_t now = millis();
-
-    // Physical shake triggers explosive dispersal of sand grains
-    if (const_cast<ImuMpu6050&>(imu).isShaken()) {
-        scatterSand();
-    }
-
-    // Step physics at ~25 Hz (40 ms)
-    if (now - m_lastPhysTime >= 40) {
-        m_lastPhysTime = now;
-        updatePhysics(imu);
-    }
-
-    // Render sand particles
-    for (int y = 0; y < MATRIX_HEIGHT; y++) {
-        for (int x = 0; x < MATRIX_WIDTH; x++) {
-            if (m_grid[y][x]) {
-                uint8_t hue = m_grid[y][x];
-                uint8_t shimmer = sin8(static_cast<uint8_t>(x * 25 + y * 18 + (now / 18)));
-                uint8_t bri = map(shimmer, 0, 255, 200, 255);
-                matrix.setPixel(x, y, CHSV(hue, 220, bri));
-            } else {
-                matrix.setPixel(x, y, CRGB::Black);
-            }
         }
     }
 }

@@ -33,7 +33,7 @@ enum ButtonEvent : uint8_t {
     BUTTON_EVENT_DOUBLE_CLICK,
     BUTTON_EVENT_TRIPLE_CLICK,
     BUTTON_EVENT_FOUR_CLICKS,
-    BUTTON_EVENT_FIVE_CLICKS,
+    BUTTON_EVENT_SEVEN_CLICKS,
     BUTTON_EVENT_LONG_PRESS_HOLD,
     BUTTON_EVENT_FACTORY_RESET_5S
 };
@@ -57,7 +57,8 @@ using ButtonCallback = std::function<void(ButtonEvent)>;
  * - Single click: toggle power
  * - Double click: next effect
  * - Triple click: reserved for GitHub Silent OTA / WebUI
- * - Five clicks: NVS reset
+ * - Four clicks: force Wi-Fi session
+ * - Seven clicks: NVS reset & Wi-Fi reset
  * - Long press hold: triggers at 700 ms, then every 40 ms while held for smooth dimming.
  *
  * Strictly non-blocking: uses millis(), contains zero delay() calls.

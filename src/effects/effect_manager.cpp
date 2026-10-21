@@ -16,7 +16,7 @@ EffectManager::EffectManager()
       m_currentFadeBrightness(DEFAULT_BRIGHTNESS),
       m_speed(128),
       m_micSensitivity(128),
-      m_cycleMask(0xFFFF),
+      m_cycleMask(DEFAULT_CYCLE_MASK),
       m_profilesDirty(false),
       m_profileSaveTime(0),
       m_lastScheduleCheckTime(0),
@@ -37,7 +37,7 @@ EffectManager::EffectManager()
       m_sleepNowActive(false),
       m_sleepNowStartMs(0),
       m_sleepNowDurationMs(0) {
-    // Initialize default profiles for all 16 built-in effects
+    // Initialize default profiles for all 15 built-in effects
     for (int i = 0; i < NUM_CORE_EFFECTS; i++) {
         m_profiles[i].brightness = 128;
         m_profiles[i].speed = 128;
@@ -51,7 +51,7 @@ EffectManager::EffectManager()
 
     memset(m_prevBuffer, 0, sizeof(m_prevBuffer));
 
-    // Instantiate all 16 built-in native effects (0..15)
+    // Instantiate all 15 built-in native effects (0..14)
     m_effects[0]  = new EffectNightlight();
     m_effects[1]  = new EffectDawnDusk();
     m_effects[2]  = new EffectFire();
@@ -59,15 +59,14 @@ EffectManager::EffectManager()
     m_effects[4]  = new EffectGameOfLife();
     m_effects[5]  = new EffectLorenzAttractor();
     m_effects[6]  = new EffectMetaballs();
-    m_effects[7]  = new EffectSandHourglass();
-    m_effects[8]  = new EffectAudioReactive();
-    m_effects[9]  = new EffectFireflies();
-    m_effects[10] = new EffectAurora();
-    m_effects[11] = new EffectMatrixRain();
-    m_effects[12] = new EffectLavaLamp();
-    m_effects[13] = new EffectVortex();
-    m_effects[14] = new EffectFireworks();
-    m_effects[15] = new EffectCyberPulse();
+    m_effects[7]  = new EffectAudioReactive();
+    m_effects[8]  = new EffectFireflies();
+    m_effects[9]  = new EffectAurora();
+    m_effects[10] = new EffectMatrixRain();
+    m_effects[11] = new EffectLavaLamp();
+    m_effects[12] = new EffectVortex();
+    m_effects[13] = new EffectFireworks();
+    m_effects[14] = new EffectCyberPulse();
 
     static_cast<EffectDawnDusk*>(m_effects[1])->setSchedule(&m_schedule);
 }
@@ -88,7 +87,9 @@ void EffectManager::begin(LedMatrix& matrix) {
     if (m_currentEffectIndex >= NUM_CORE_EFFECTS) {
         m_currentEffectIndex = 0;
     }
-    m_cycleMask = m_prefs.getUShort("cycle_mask", 0xFFFF);
+    m_cycleMask = m_prefs.getUShort("cycle_mask", DEFAULT_CYCLE_MASK);
+    m_cycleMask &= DEFAULT_CYCLE_MASK;
+    if (m_cycleMask == 0) m_cycleMask = DEFAULT_CYCLE_MASK;
 
     // 2. Load individual effect profiles from "eff_prof" namespace
     Preferences profPrefs;
@@ -149,9 +150,6 @@ void EffectManager::begin(LedMatrix& matrix) {
     if (m_effects[0]) {
         static_cast<EffectNightlight*>(m_effects[0])->setColorTemp(m_profiles[0].param1);
     }
-    if (m_effects[15]) {
-        static_cast<EffectCyberPulse*>(m_effects[15])->setSensitivity(m_profiles[15].sensitivity);
-    }
 
     m_curtainState = m_powerState ? CurtainState::OPEN : CurtainState::CLOSED;
     matrix.setBrightness(m_powerState ? m_targetBrightness : 0);
@@ -180,7 +178,7 @@ void EffectManager::begin(LedMatrix& matrix) {
     }
 }
 
-void EffectManager::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2S& mic) {
+void EffectManager::update(LedMatrix& matrix, const MicI2S& mic) {
     // Check pending delayed NVS writes
     updateNvs();
     updateProfilesNvs();
@@ -213,7 +211,7 @@ void EffectManager::update(LedMatrix& matrix, const ImuMpu6050& imu, const MicI2
 
     // 1. Render active effect frame
     if (m_effects[m_currentEffectIndex]) {
-        m_effects[m_currentEffectIndex]->update(matrix, imu, mic);
+        m_effects[m_currentEffectIndex]->update(matrix, mic);
     }
 
     // 2. Crossfade 500 ms between previous and current effect
@@ -345,8 +343,6 @@ void EffectManager::setEffect(uint8_t index, LedMatrix& matrix) {
         m_effects[m_currentEffectIndex]->setSpeed(m_speed);
         if (m_currentEffectIndex == 0) {
             static_cast<EffectNightlight*>(m_effects[0])->setColorTemp(m_profiles[0].param1);
-        } else if (m_currentEffectIndex == 15) {
-            static_cast<EffectCyberPulse*>(m_effects[15])->setSensitivity(m_micSensitivity);
         }
         m_effects[m_currentEffectIndex]->init(matrix);
     }
@@ -434,9 +430,6 @@ void EffectManager::setMicSensitivity(uint8_t sensitivity) {
     if (sensitivity < 1) sensitivity = 1;
     m_micSensitivity = sensitivity;
     m_profiles[m_currentEffectIndex].sensitivity = sensitivity;
-    if (m_currentEffectIndex == 15 && m_effects[15]) {
-        static_cast<EffectCyberPulse*>(m_effects[15])->setSensitivity(sensitivity);
-    }
     markProfilesDirty();
     markNvsDirty();
 }
@@ -460,7 +453,7 @@ void EffectManager::resetSettings(LedMatrix& matrix) {
     m_targetBrightness = DEFAULT_BRIGHTNESS;
     m_speed = 128;
     m_micSensitivity = 128;
-    m_cycleMask = 0xFFFF;
+    m_cycleMask = DEFAULT_CYCLE_MASK;
 
     for (int i = 0; i < NUM_CORE_EFFECTS; i++) {
         m_profiles[i].brightness = 128;
@@ -547,8 +540,6 @@ void EffectManager::setProfile(uint8_t index, const EffectProfile& prof) {
         m_profiles[index] = prof;
         if (index == 0 && m_effects[0]) {
             static_cast<EffectNightlight*>(m_effects[0])->setColorTemp(prof.param1);
-        } else if (index == 15 && m_effects[15]) {
-            static_cast<EffectCyberPulse*>(m_effects[15])->setSensitivity(prof.sensitivity);
         }
         if (prof.inCycle) {
             m_cycleMask |= (1 << index);
@@ -572,7 +563,7 @@ void EffectManager::setProfile(uint8_t index, const EffectProfile& prof) {
 }
 
 void EffectManager::setCycleMask(uint16_t mask) {
-    m_cycleMask = mask;
+    m_cycleMask = mask & DEFAULT_CYCLE_MASK;
     for (int i = 0; i < NUM_CORE_EFFECTS; i++) {
         m_profiles[i].inCycle = ((m_cycleMask & (1 << i)) != 0);
     }

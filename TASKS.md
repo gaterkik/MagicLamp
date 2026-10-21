@@ -17,7 +17,7 @@
 - **Фаза 2 (Task 2.1 – 2.4):** Движок 9 базовых эффектов и NVS — `DONE`
 - **Фаза 3 (Task 3.1 – 3.4):** Калибровка железа, 10-й эффект, Wi-Fi, WebUI, Silent OTA — `DONE`
 - **Фаза 4 (Task 4.1 – 4.7):** Магазин эффектов, EffectVM, v0.6.0 Профили эффектов в NVS, NTP Будильник Рассвет/Отбой, Аудио и Скорость — `DONE`
-- **Фаза 5 (Task 5.1 – 5.5):** Apple UX, 16 встроенных эффектов, карточки-аккордеоны с галочками в WebUI, аппаратный Wire для GY-521, Zigbee-модуль, релиз v0.8.0, v0.8.1 и v0.8.2 — `DONE`
+- **Фаза 5 (Task 5.1 – 5.6):** Apple UX, 15 встроенных эффектов, релизы v0.8.0 – v0.9.0 — `DONE`
 
 ---
 
@@ -456,4 +456,23 @@
   4. В WebUI отображаются текущее время лампы, селекторы длительности, кнопка «Заснуть сейчас» и индикация активной фазы.
   5. В коде `imu_mpu6050` нет `INPUT_PULLDOWN` и `Wire.end()`, реализован I2C Clock Stretching, инициализация MPU-6500 (регистры `0x6B = 0x01`, `0x6C = 0x00`), а `/api/imu/diag` возвращает `raw_ax/ay/az`, `who_am_i`, `GPIO5_idle`, `GPIO6_idle`.
   6. Сборка `pio run` завершается со статусом `SUCCESS`.
+- **QA_Notes:** Проверено QA: замечаний нет.
+
+---
+
+### [Task 5.6] Релиз v0.9.0: Полное удаление IMU и эффекта Песочные часы (15 эффектов), возврат исходного CyberPulse без микрофона и перенос сброса Wi-Fi на 7 кликов
+- **Status:** `DONE`
+- **Files:** `include/version.h`, `include/config.h`, `src/hal/button.h`, `src/hal/button.cpp`, `src/effects/effect_manager.h`, `src/effects/effect_manager.cpp`, `src/effects/math_effects.h`, `src/effects/math_effects.cpp`, `src/effects/extra_effects.h`, `src/effects/extra_effects.cpp`, `src/network/webui_html.h`, `src/network/web_server.h`, `src/network/web_server.cpp`, `src/main.cpp`
+- **Description:**
+  1. Поднять `FIRMWARE_VERSION` в `include/version.h` до `"0.9.0"`.
+  2. Удалить файлы `src/hal/imu_mpu6050.h` и `src/hal/imu_mpu6050.cpp`, очистить `include/config.h`, `src/main.cpp`, `src/effects/math_effects.*`, `src/effects/effect_manager.*` от всех упоминаний IMU и эффекта `SandHourglass` (оставить 15 эффектов, индексы 0..14).
+  3. Вернуть эффект `CyberPulse` к исходному виду без привязки к `MicI2S` и скрыть для него ползунок микрофона в `webui_html.h` (оставить только ползунки Яркость и Скорость).
+  4. В `src/hal/button.*` и `src/main.cpp` перенести событие сброса Wi-Fi с 5 кликов на 7 кликов (`BUTTON_EVENT_SEVEN_CLICKS`).
+  5. Удалить из `src/network/web_server.*` и `src/network/webui_html.h` маршрут `/api/imu/diag`, кнопку «Тест датчика» и строку статуса гироскопа.
+- **Acceptance Criteria (Критерии для QA):**
+  1. `FIRMWARE_VERSION` равна `"0.9.0"`.
+  2. В проекте отсутствуют файлы `imu_mpu6050.*`, эффект `SandHourglass` и эндпоинт `/api/imu/diag`; общее число эффектов равно 15.
+  3. Эффект `CyberPulse` не использует микрофон и регулируется ползунками Яркость и Скорость.
+  4. Сброс Wi-Fi срабатывает строго по 7 кликам (`BUTTON_EVENT_SEVEN_CLICKS`).
+  5. Сборка `pio run` завершается со статусом `SUCCESS`.
 - **QA_Notes:** Проверено QA: замечаний нет.

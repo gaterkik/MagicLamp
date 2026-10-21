@@ -12,8 +12,8 @@ const char* buttonEventToString(ButtonEvent event) {
             return "BUTTON_EVENT_TRIPLE_CLICK";
         case BUTTON_EVENT_FOUR_CLICKS:
             return "BUTTON_EVENT_FOUR_CLICKS";
-        case BUTTON_EVENT_FIVE_CLICKS:
-            return "BUTTON_EVENT_FIVE_CLICKS";
+        case BUTTON_EVENT_SEVEN_CLICKS:
+            return "BUTTON_EVENT_SEVEN_CLICKS";
         case BUTTON_EVENT_LONG_PRESS_HOLD:
             return "BUTTON_EVENT_LONG_PRESS_HOLD";
         case BUTTON_EVENT_FACTORY_RESET_5S:
@@ -119,8 +119,8 @@ ButtonEvent ButtonDriver::update() {
                     // Valid short click release
                     _clickCount++;
                     _lastReleaseTime = now;
-                    if (_clickCount >= 5) {
-                        event = BUTTON_EVENT_FIVE_CLICKS;
+                    if (_clickCount >= 7) {
+                        event = BUTTON_EVENT_SEVEN_CLICKS;
                         _clickCount = 0;
                     }
                 }
@@ -159,8 +159,8 @@ ButtonEvent ButtonDriver::update() {
                 event = BUTTON_EVENT_TRIPLE_CLICK;
             } else if (_clickCount == 4) {
                 event = BUTTON_EVENT_FOUR_CLICKS;
-            } else if (_clickCount >= 5) {
-                event = BUTTON_EVENT_FIVE_CLICKS;
+            } else if (_clickCount >= 7) {
+                event = BUTTON_EVENT_SEVEN_CLICKS;
             }
             _clickCount = 0;
         }
