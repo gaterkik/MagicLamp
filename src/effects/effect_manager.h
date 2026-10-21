@@ -113,6 +113,10 @@ struct ScheduleConfig {
     uint8_t duskMinute = 0;
     uint8_t duskDurationMin = 30; // 30 min amber sleep fade to black
 
+    bool sleepNowActive = false;
+    uint32_t sleepNowStartMs = 0;
+    uint32_t sleepNowDurationMs = 0;
+
     bool enabled = false; // Backward-compatibility
     bool isEnabled() const { return dawnEnabled || duskEnabled || enabled; }
 };
@@ -308,6 +312,31 @@ public:
     void setSchedule(const ScheduleConfig& cfg);
 
     /**
+     * @brief Start immediate sleep timer fade out for duskDurationMin minutes.
+     */
+    void startSleepNow(LedMatrix& matrix);
+
+    /**
+     * @brief Stop immediate sleep timer.
+     */
+    void stopSleepNow();
+
+    /**
+     * @brief Check whether "Sleep Now" timer is currently active.
+     */
+    bool isSleepNowActive() const { return m_sleepNowActive; }
+
+    /**
+     * @brief Get human-readable schedule phase status.
+     */
+    String getScheduleStatus() const;
+
+    uint8_t getDawnDurationMin() const { return m_schedule.dawnDurationMin; }
+    uint8_t getDuskDurationMin() const { return m_schedule.duskDurationMin; }
+    void setDawnDurationMin(uint8_t min);
+    void setDuskDurationMin(uint8_t min);
+
+    /**
      * @brief Thread-safe OTA states for non-blocking matrix rendering.
      */
     enum OtaState : uint8_t {
@@ -369,6 +398,9 @@ private:
 
     ScheduleConfig m_schedule;
     uint32_t m_lastScheduleCheckTime;
+    bool m_sleepNowActive;
+    uint32_t m_sleepNowStartMs;
+    uint32_t m_sleepNowDurationMs;
 
     bool m_dimmerDirUp;
     uint32_t m_lastDimmerStepTime;

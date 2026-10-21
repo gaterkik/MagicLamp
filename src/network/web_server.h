@@ -70,6 +70,8 @@ private:
     void handleRoot();
     void handleStatus();
     void handleControl();
+    void handleSchedule();
+    void handleSleepNow();
     void handleRadioSwitch();
     void handleOtaCheck();
     void handleWifi();

@@ -163,6 +163,9 @@ void LampWebServer::registerRoutes() {
     // REST API
     m_server.on("/api/status", HTTP_GET, [this]() { handleStatus(); });
     m_server.on("/api/control", HTTP_POST, [this]() { handleControl(); });
+    m_server.on("/api/schedule", HTTP_GET, [this]() { handleSchedule(); });
+    m_server.on("/api/schedule", HTTP_POST, [this]() { handleSchedule(); });
+    m_server.on("/api/schedule/sleep_now", HTTP_POST, [this]() { handleSleepNow(); });
     m_server.on("/api/radio/switch", HTTP_POST, [this]() { handleRadioSwitch(); });
     m_server.on("/api/ota/check", HTTP_POST, [this]() { handleOtaCheck(); });
     m_server.on("/api/wifi", HTTP_POST, [this]() { handleWifi(); });
@@ -289,8 +292,24 @@ void LampWebServer::handleStatus() {
     }
     effectsArray += "]";
 
-    String formattedTime = m_wifi ? m_wifi->getFormattedTime() : "--:--";
+    time_t rawtime;
+    time(&rawtime);
+    bool ntpSynced = (rawtime > 100000);
+    String currentTime = "--:--:--";
+    if (ntpSynced) {
+        time_t local = rawtime + TIMEZONE_OFFSET_SEC;
+        struct tm* ti = gmtime(&local);
+        if (ti) {
+            char tbuf[16];
+            snprintf(tbuf, sizeof(tbuf), "%02d:%02d:%02d", ti->tm_hour, ti->tm_min, ti->tm_sec);
+            currentTime = String(tbuf);
+        }
+    }
+    String formattedTime = ntpSynced ? currentTime.substring(0, 5) : "--:--";
     ScheduleConfig sch = m_effectMgr ? m_effectMgr->getSchedule() : ScheduleConfig();
+    String schedStatus = m_effectMgr ? m_effectMgr->getScheduleStatus() : "Расписание выключено";
+    bool sleepNowActive = m_effectMgr ? m_effectMgr->isSleepNowActive() : false;
+
     char dawnBuf[8], duskBuf[8];
     snprintf(dawnBuf, sizeof(dawnBuf), "%02d:%02d", sch.dawnHour, sch.dawnMinute);
     snprintf(duskBuf, sizeof(duskBuf), "%02d:%02d", sch.duskHour, sch.duskMinute);
@@ -311,6 +330,8 @@ void LampWebServer::handleStatus() {
                      ",\"radio_mode\":\"" + String(radioMode) + "\"" +
                      ",\"cycle_mask\":" + String(cycleMask) +
                      ",\"time\":\"" + formattedTime + "\"" +
+                     ",\"currentTime\":\"" + currentTime + "\"" +
+                     ",\"ntpSynced\":" + String(ntpSynced ? "true" : "false") +
                      ",\"scheduleEnabled\":" + String(sch.isEnabled() ? "true" : "false") +
                      ",\"dawnEnabled\":" + String(sch.dawnEnabled ? "true" : "false") +
                      ",\"duskEnabled\":" + String(sch.duskEnabled ? "true" : "false") +
@@ -318,8 +339,12 @@ void LampWebServer::handleStatus() {
                      ",\"duskTime\":\"" + String(duskBuf) + "\"" +
                      ",\"dawnHour\":" + String(sch.dawnHour) +
                      ",\"dawnMinute\":" + String(sch.dawnMinute) +
+                     ",\"dawnDurationMin\":" + String(sch.dawnDurationMin) +
                      ",\"duskHour\":" + String(sch.duskHour) +
                      ",\"duskMinute\":" + String(sch.duskMinute) +
+                     ",\"duskDurationMin\":" + String(sch.duskDurationMin) +
+                     ",\"scheduleStatus\":\"" + schedStatus + "\"" +
+                     ",\"sleepNowActive\":" + String(sleepNowActive ? "true" : "false") +
                      ",\"cpuTemp\":" + String(cpuTemp, 1) +
                      ",\"rssi\":" + String(rssi) +
                      ",\"ip\":\"" + ip + "\"" +
@@ -445,6 +470,15 @@ void LampWebServer::handleControl() {
 
     // Schedule parameters
     if (m_effectMgr) {
+        bool sleepNowVal = false;
+        if (getBoolParam(m_server, body, "sleepNow", sleepNowVal) || getBoolParam(m_server, body, "sleep_now", sleepNowVal)) {
+            if (sleepNowVal && m_matrix) {
+                m_effectMgr->startSleepNow(*m_matrix);
+            } else {
+                m_effectMgr->stopSleepNow();
+            }
+        }
+
         ScheduleConfig sch = m_effectMgr->getSchedule();
         bool scheduleChanged = false;
 
@@ -482,6 +516,16 @@ void LampWebServer::handleControl() {
             scheduleChanged = true;
         }
 
+        int dawnDur = 0, duskDur = 0;
+        if (getIntParam(m_server, body, "dawnDurationMin", dawnDur) || getIntParam(m_server, body, "dawn_dur", dawnDur) || getIntParam(m_server, body, "dawnDuration", dawnDur)) {
+            sch.dawnDurationMin = constrain(dawnDur, 1, 120);
+            scheduleChanged = true;
+        }
+        if (getIntParam(m_server, body, "duskDurationMin", duskDur) || getIntParam(m_server, body, "dusk_dur", duskDur) || getIntParam(m_server, body, "duskDuration", duskDur)) {
+            sch.duskDurationMin = constrain(duskDur, 1, 180);
+            scheduleChanged = true;
+        }
+
         String dawnStr = "", duskStr = "";
         if (getStringParam(m_server, body, "dawnTime", dawnStr)) {
             int h = 0, m = 0;
@@ -506,6 +550,150 @@ void LampWebServer::handleControl() {
     }
 
     m_server.send(200, "application/json", "{\"status\":\"ok\"}");
+}
+
+void LampWebServer::handleSchedule() {
+    noteHttpActivity();
+    if (m_server.method() == HTTP_GET) {
+        time_t rawtime;
+        time(&rawtime);
+        bool ntpSynced = (rawtime > 100000);
+        String currentTime = "--:--:--";
+        if (ntpSynced) {
+            time_t local = rawtime + TIMEZONE_OFFSET_SEC;
+            struct tm* ti = gmtime(&local);
+            if (ti) {
+                char tbuf[16];
+                snprintf(tbuf, sizeof(tbuf), "%02d:%02d:%02d", ti->tm_hour, ti->tm_min, ti->tm_sec);
+                currentTime = String(tbuf);
+            }
+        }
+
+        ScheduleConfig sch = m_effectMgr ? m_effectMgr->getSchedule() : ScheduleConfig();
+        String schedStatus = m_effectMgr ? m_effectMgr->getScheduleStatus() : "Расписание выключено";
+        bool sleepNowActive = m_effectMgr ? m_effectMgr->isSleepNowActive() : false;
+
+        char dawnBuf[8], duskBuf[8];
+        snprintf(dawnBuf, sizeof(dawnBuf), "%02d:%02d", sch.dawnHour, sch.dawnMinute);
+        snprintf(duskBuf, sizeof(duskBuf), "%02d:%02d", sch.duskHour, sch.duskMinute);
+
+        String json = "{\"status\":\"ok\""
+                      ",\"currentTime\":\"" + currentTime + "\""
+                      ",\"ntpSynced\":" + String(ntpSynced ? "true" : "false") +
+                      ",\"scheduleEnabled\":" + String(sch.isEnabled() ? "true" : "false") +
+                      ",\"dawnEnabled\":" + String(sch.dawnEnabled ? "true" : "false") +
+                      ",\"duskEnabled\":" + String(sch.duskEnabled ? "true" : "false") +
+                      ",\"dawnTime\":\"" + String(dawnBuf) + "\""
+                      ",\"duskTime\":\"" + String(duskBuf) + "\""
+                      ",\"dawnHour\":" + String(sch.dawnHour) +
+                      ",\"dawnMinute\":" + String(sch.dawnMinute) +
+                      ",\"dawnDurationMin\":" + String(sch.dawnDurationMin) +
+                      ",\"duskHour\":" + String(sch.duskHour) +
+                      ",\"duskMinute\":" + String(sch.duskMinute) +
+                      ",\"duskDurationMin\":" + String(sch.duskDurationMin) +
+                      ",\"scheduleStatus\":\"" + schedStatus + "\""
+                      ",\"sleepNowActive\":" + String(sleepNowActive ? "true" : "false") + "}";
+
+        m_server.send(200, "application/json", json);
+        return;
+    }
+
+    // POST /api/schedule
+    String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
+    if (m_effectMgr) {
+        bool sleepNowVal = false;
+        if (getBoolParam(m_server, body, "sleepNow", sleepNowVal) || getBoolParam(m_server, body, "sleep_now", sleepNowVal)) {
+            if (sleepNowVal && m_matrix) {
+                m_effectMgr->startSleepNow(*m_matrix);
+            } else {
+                m_effectMgr->stopSleepNow();
+            }
+        }
+
+        ScheduleConfig sch = m_effectMgr->getSchedule();
+        bool changed = false;
+
+        bool dawnEn = false, duskEn = false;
+        if (getBoolParam(m_server, body, "dawnEnabled", dawnEn)) {
+            sch.dawnEnabled = dawnEn;
+            changed = true;
+        }
+        if (getBoolParam(m_server, body, "duskEnabled", duskEn)) {
+            sch.duskEnabled = duskEn;
+            changed = true;
+        }
+
+        int dh = 0, dm = 0, sh = 0, sm = 0;
+        if (getIntParam(m_server, body, "dawnHour", dh)) {
+            sch.dawnHour = constrain(dh, 0, 23);
+            changed = true;
+        }
+        if (getIntParam(m_server, body, "dawnMinute", dm)) {
+            sch.dawnMinute = constrain(dm, 0, 59);
+            changed = true;
+        }
+        if (getIntParam(m_server, body, "duskHour", sh)) {
+            sch.duskHour = constrain(sh, 0, 23);
+            changed = true;
+        }
+        if (getIntParam(m_server, body, "duskMinute", sm)) {
+            sch.duskMinute = constrain(sm, 0, 59);
+            changed = true;
+        }
+
+        int dawnDur = 0, duskDur = 0;
+        if (getIntParam(m_server, body, "dawnDurationMin", dawnDur) || getIntParam(m_server, body, "dawn_dur", dawnDur) || getIntParam(m_server, body, "dawnDuration", dawnDur)) {
+            sch.dawnDurationMin = constrain(dawnDur, 1, 120);
+            changed = true;
+        }
+        if (getIntParam(m_server, body, "duskDurationMin", duskDur) || getIntParam(m_server, body, "dusk_dur", duskDur) || getIntParam(m_server, body, "duskDuration", duskDur)) {
+            sch.duskDurationMin = constrain(duskDur, 1, 180);
+            changed = true;
+        }
+
+        String dawnStr = "", duskStr = "";
+        if (getStringParam(m_server, body, "dawnTime", dawnStr)) {
+            int h = 0, m = 0;
+            if (sscanf(dawnStr.c_str(), "%d:%d", &h, &m) >= 2) {
+                sch.dawnHour = constrain(h, 0, 23);
+                sch.dawnMinute = constrain(m, 0, 59);
+                changed = true;
+            }
+        }
+        if (getStringParam(m_server, body, "duskTime", duskStr)) {
+            int h = 0, m = 0;
+            if (sscanf(duskStr.c_str(), "%d:%d", &h, &m) >= 2) {
+                sch.duskHour = constrain(h, 0, 23);
+                sch.duskMinute = constrain(m, 0, 59);
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            m_effectMgr->setSchedule(sch);
+        }
+    }
+
+    m_server.send(200, "application/json", "{\"status\":\"ok\"}");
+}
+
+void LampWebServer::handleSleepNow() {
+    noteHttpActivity();
+    if (m_effectMgr && m_matrix) {
+        String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
+        bool enable = true;
+        if (getBoolParam(m_server, body, "enable", enable)) {
+            if (!enable) {
+                m_effectMgr->stopSleepNow();
+                m_server.send(200, "application/json", "{\"status\":\"ok\",\"sleepNowActive\":false}");
+                return;
+            }
+        }
+        m_effectMgr->startSleepNow(*m_matrix);
+        m_server.send(200, "application/json", "{\"status\":\"ok\",\"sleepNowActive\":true}");
+    } else {
+        m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"EffectManager unavailable\"}");
+    }
 }
 
 void LampWebServer::handleRadioSwitch() {

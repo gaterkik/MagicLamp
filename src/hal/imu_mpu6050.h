@@ -138,10 +138,14 @@ public:
     uint8_t getWhoAmI() const { return m_whoAmI; }
 
     /**
-     * @brief Run comprehensive hardware I2C diagnostics on 100 kHz and 10 kHz.
+     * @brief Run comprehensive hardware I2C diagnostics.
      * @return JSON string with diagnostics report.
      */
     String runDiagnostics();
+
+    uint8_t getActiveSda() const { return m_activeSda; }
+    uint8_t getActiveScl() const { return m_activeScl; }
+    uint8_t getI2cAddr() const { return m_i2cAddr; }
 
 private:
     uint8_t m_sdaPin;
@@ -153,7 +157,6 @@ private:
     uint32_t m_sampleIntervalMs;
     float m_shakeThreshold;
 
-    bool m_useWire;
     bool m_fallback;
     uint8_t m_consecutiveErrors;
     uint32_t m_lastSampleTime;
@@ -170,26 +173,25 @@ private:
     float m_rawAy;
     float m_rawAz;
 
-    // Bit-Bang Open-Drain I2C primitives
+    // Bit-Bang Open-Drain I2C primitives with Clock Stretching (50 kHz, half-period 10 us)
     inline void i2cSetHigh(uint8_t pin) {
         pinMode(pin, INPUT_PULLUP);
     }
     inline void i2cSetLow(uint8_t pin) {
-        digitalWrite(pin, LOW);
         pinMode(pin, OUTPUT);
+        digitalWrite(pin, LOW);
     }
+    void i2cSclHigh();
     void i2cStart();
     void i2cStop();
     bool i2cWriteByte(uint8_t data);
     uint8_t i2cReadByte(bool ack);
+    bool writeRegister(uint8_t reg, uint8_t val);
 
     void recoverBus(uint8_t sda, uint8_t scl);
-    bool checkLinesPullup(uint8_t sda, uint8_t scl);
+    bool probePair(uint8_t sda, uint8_t scl);
     bool initSensor(uint8_t addr, uint8_t sda, uint8_t scl);
-    bool probeAddresses(uint8_t sda, uint8_t scl, const uint8_t* addrs, size_t count);
     bool quickProbe();
-    bool scanPair(uint8_t sda, uint8_t scl);
-    bool scanPins();
     bool readRawData(int16_t& ax, int16_t& ay, int16_t& az);
     void updateFallback(uint32_t now);
 };

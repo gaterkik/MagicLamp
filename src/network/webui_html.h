@@ -449,6 +449,21 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       font-size: 0.95rem;
       outline: none;
     }
+    select.sched-select {
+      background: #172138;
+      border: 1px solid #334155;
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 6px;
+      width: 100%;
+      font-size: 0.88rem;
+      outline: none;
+      margin-top: 4px;
+      cursor: pointer;
+    }
+    select.sched-select:focus {
+      border-color: var(--primary);
+    }
 
     /* Telemetry Grid */
     .telem-grid {
@@ -669,13 +684,13 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="logo-icon">&#9733;</div>
         <div>
           <h1>MagicLamp</h1>
-          <div style="font-size:0.75rem; color:var(--text-muted);">ESP32-C6 Interactive Light v0.8.1</div>
+          <div style="font-size:0.75rem; color:var(--text-muted);">ESP32-C6 Interactive Light v0.8.2</div>
         </div>
       </div>
       <div class="header-badges">
         <div id="badge-clock" class="badge badge-time">
           <span>&#128339;</span>
-          <span id="lamp-time">--:--</span>
+          <span id="lamp-time">--:--:--</span>
         </div>
         <div id="badge-radio" class="badge badge-radio-wifi">
           <span class="dot"></span>
@@ -724,7 +739,13 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <section class="card">
       <div class="card-title">
         <span>&#9200; Будильник Рассвет и Таймер Отбой</span>
-        <span style="font-size:0.76rem; font-weight:normal; color:var(--text-muted);">NTP синхронизация (GMT+2)</span>
+        <span id="sched-clock" style="font-size:0.85rem; font-weight:600; color:var(--primary); font-family:monospace;">--:--:-- GMT+2</span>
+      </div>
+
+      <!-- Индикатор активной фазы расписания -->
+      <div id="sched-phase-badge" class="badge" style="background:rgba(56,189,248,0.12); color:var(--primary); border:1px solid rgba(56,189,248,0.3); padding:8px 12px; margin-bottom:14px; width:100%; border-radius:8px; display:flex; align-items:center; gap:8px;">
+        <span class="dot" style="background:currentColor;"></span>
+        <span id="sched-phase-text" style="font-size:0.84rem;">Ожидание расписания</span>
       </div>
 
       <div class="sched-grid">
@@ -736,9 +757,19 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <span id="dawn-status-text">ВЫКЛ</span>
             </button>
           </div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">Целевое время завершения:</div>
           <input type="time" id="sched-dawn-time" value="07:00" onchange="saveScheduleTimes()">
-          <div style="font-size:0.72rem; color:var(--text-muted); margin-top:5px;">
-            Включает лампу из любого режима за 5 минут до времени и плавно разгорается от углей до теплого солнца
+          <div style="margin-top:8px;">
+            <div style="font-size:0.75rem; color:var(--text-muted);">Длительность разгорания:</div>
+            <select id="sched-dawn-dur" class="sched-select" onchange="onDawnDurationChange(this.value)">
+              <option value="5">5 минут</option>
+              <option value="10">10 минут</option>
+              <option value="15">15 минут</option>
+              <option value="30">30 минут</option>
+            </select>
+          </div>
+          <div style="font-size:0.72rem; color:var(--text-muted); margin-top:6px;">
+            Включает лампу до 100% ровно к целевому времени, плавно набирая свет
           </div>
         </div>
 
@@ -750,12 +781,27 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <span id="dusk-status-text">ВЫКЛ</span>
             </button>
           </div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">Целевое время выключения:</div>
           <input type="time" id="sched-dusk-time" value="23:00" onchange="saveScheduleTimes()">
-          <div style="font-size:0.72rem; color:var(--text-muted); margin-top:5px;">
-            Переключает любой эффект в янтарный свет 1900K (B = 0) и плавно гасит за 30 мин до полного выключения
+          <div style="margin-top:8px;">
+            <div style="font-size:0.75rem; color:var(--text-muted);">Длительность затухания:</div>
+            <select id="sched-dusk-dur" class="sched-select" onchange="onDuskDurationChange(this.value)">
+              <option value="15">15 минут</option>
+              <option value="30">30 минут</option>
+              <option value="45">45 минут</option>
+            </select>
+          </div>
+          <div style="font-size:0.72rem; color:var(--text-muted); margin-top:6px;">
+            Переключает в янтарный свет 1900K (B = 0) и плавно гасит до полного выключения
           </div>
         </div>
       </div>
+
+      <!-- Кнопка быстрого действия «Заснуть сейчас» -->
+      <button id="btn-sleep-now" class="btn" style="background:linear-gradient(135deg, #f59e0b, #d97706); color:#fff; width:100%; font-weight:600; padding:11px 16px; margin-top:14px; font-size:0.92rem;" onclick="triggerSleepNow()">
+        <span id="sleep-now-icon">&#128564;</span>
+        <span id="sleep-now-text">Заснуть сейчас (Таймер сна)</span>
+      </button>
     </section>
 
     <!-- 16 BUILT-IN EFFECTS ACCORDION -->
@@ -802,12 +848,12 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="telem-val"><span id="telem-heap">--</span> KB</div>
         </div>
         <div class="telem-item">
-          <div class="telem-label">Гироскоп GY-521</div>
+          <div class="telem-label">Гироскоп GY-6500 / GY-521</div>
           <div class="telem-val" style="font-size:0.82rem;" id="telem-imu">--</div>
         </div>
         <div class="telem-item">
           <div class="telem-label">Версия</div>
-          <div class="telem-val" id="telem-ver">v0.8.0</div>
+          <div class="telem-val" id="telem-ver">v0.8.2</div>
         </div>
       </div>
     </section>
@@ -818,7 +864,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       
       <div class="ota-row">
         <div>
-          <div class="ota-info">Текущая версия: <strong id="ota-cur-ver">v0.8.0</strong> | Последняя на GitHub: <strong id="ota-latest-ver">--</strong></div>
+          <div class="ota-info">Текущая версия: <strong id="ota-cur-ver">v0.8.2</strong> | Последняя на GitHub: <strong id="ota-latest-ver">--</strong></div>
           <div class="ota-info" style="margin-top:4px;">Статус проверки: <span id="ota-status" style="color:var(--primary);">Idle</span></div>
         </div>
         <button id="btn-ota-check" class="btn btn-secondary" onclick="triggerGithubOta()">
@@ -866,12 +912,12 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   <div id="modal-imu" class="modal-overlay" onclick="closeImuModal(event)">
     <div class="modal-box" onclick="event.stopPropagation()">
       <div class="modal-header">
-        <h3>&#128269; Диагностика I2C шины и GY-521</h3>
+        <h3>&#128269; Диагностика I2C шины и GY-6500 / GY-521</h3>
         <button class="modal-close" onclick="closeImuModal()">&times;</button>
       </div>
       <div class="modal-body">
         <div id="imu-diag-summary" style="margin-bottom:12px; font-weight:600;">Выполняется опрос шины I2C...</div>
-        <pre class="diag-pre" id="imu-diag-output">Тестирование аппаратного Wire (100kHz, 10kHz) и Open-Drain сканера...</pre>
+        <pre class="diag-pre" id="imu-diag-output">Тестирование Bit-Bang I2C с Clock Stretching и сканирование регистров MPU-6500 / MPU-6050...</pre>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="runImuDiag()">&#8635; Повторить тест</button>
@@ -1099,6 +1145,52 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // Schedule actions (Independent Dawn Alarm and Dusk Sleep Timer)
     let isDawnEnabled = false;
     let isDuskEnabled = false;
+    let isSleepNowActive = false;
+
+    function onDawnDurationChange(val) {
+      sendControl({ dawnDurationMin: parseInt(val, 10) });
+    }
+
+    function onDuskDurationChange(val) {
+      sendControl({ duskDurationMin: parseInt(val, 10) });
+    }
+
+    async function triggerSleepNow() {
+      const btn = document.getElementById('btn-sleep-now');
+      btn.disabled = true;
+      const willEnable = !isSleepNowActive;
+      try {
+        const res = await fetch('/api/schedule/sleep_now', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enable: willEnable })
+        });
+        const data = await res.json();
+        updateSleepNowUI(!!data.sleepNowActive);
+      } catch (e) {
+        console.error('Sleep now error:', e);
+      } finally {
+        setTimeout(() => { btn.disabled = false; }, 500);
+      }
+    }
+
+    function updateSleepNowUI(active) {
+      isSleepNowActive = active;
+      const btn = document.getElementById('btn-sleep-now');
+      const icon = document.getElementById('sleep-now-icon');
+      const text = document.getElementById('sleep-now-text');
+      if (btn && text) {
+        if (active) {
+          btn.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
+          if (icon) icon.innerHTML = '&#9209;';
+          text.innerText = 'Отменить таймер сна';
+        } else {
+          btn.style.background = 'linear-gradient(135deg, #f59e0b, #d97706)';
+          if (icon) icon.innerHTML = '&#128564;';
+          text.innerText = 'Заснуть сейчас (Таймер сна)';
+        }
+      }
+    }
 
     function toggleDawn(e) {
       if (e) e.stopPropagation();
@@ -1226,8 +1318,8 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const out = document.getElementById('imu-diag-output');
 
       modal.classList.add('open');
-      sum.innerHTML = '<span style="color:var(--primary);">&#8635; Тестирование шины I2C (100kHz & 10kHz)...</span>';
-      out.innerText = 'Выполняются аппаратные пробы Wire и сканирование адресов...';
+      sum.innerHTML = '<span style="color:var(--primary);">&#8635; Тестирование шины I2C (Bit-Bang 50kHz)...</span>';
+      out.innerText = 'Опрос сенсора MPU-6500 / MPU-6050 и проверка GPIO5/GPIO6...';
 
       try {
         const res = await fetch('/api/imu/diag');
@@ -1236,9 +1328,10 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         out.innerText = formatted;
 
         if (data.status && data.status.includes('Online')) {
-          sum.innerHTML = '<span style="color:var(--success);">&#10004; GY-521 MPU-6050 подключен и готов к работе!</span>';
+          const sType = data.sensor_type || ((data.who_am_i === '0x70') ? 'GY-6500 (MPU-6500)' : 'GY-521 (MPU-6050)');
+          sum.innerHTML = `<span style="color:var(--success);">&#10004; ${sType} подключен и готов к работе! (${data.who_am_i || ''})</span>`;
         } else {
-          sum.innerHTML = '<span style="color:var(--warning);">&#9888; ' + (data.status || 'Сенсор не найден на шине') + '</span>';
+          sum.innerHTML = '<span style="color:var(--warning);">&#9888; ' + (data.status || 'Сенсор не найден на шине') + ' (GPIO5: ' + (data.GPIO5_idle || '?') + ', GPIO6: ' + (data.GPIO6_idle || '?') + ')</span>';
         }
       } catch (err) {
         sum.innerHTML = '<span style="color:var(--danger);">&#10008; Ошибка связи с API диагностики!</span>';
@@ -1333,9 +1426,52 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         }
 
         // Schedule sync
-        if (data.time) {
-          document.getElementById('lamp-time').innerText = data.time;
+        const curTimeStr = data.currentTime || data.time;
+        if (curTimeStr) {
+          const clockEl = document.getElementById('sched-clock');
+          if (clockEl) clockEl.innerText = `${curTimeStr} GMT+2`;
+          const lampTimeEl = document.getElementById('lamp-time');
+          if (lampTimeEl) lampTimeEl.innerText = curTimeStr;
         }
+
+        if (data.dawnDurationMin !== undefined) {
+          const dDawnDur = document.getElementById('sched-dawn-dur');
+          if (dDawnDur && document.activeElement !== dDawnDur) {
+            dDawnDur.value = String(data.dawnDurationMin);
+          }
+        }
+        if (data.duskDurationMin !== undefined) {
+          const dDuskDur = document.getElementById('sched-dusk-dur');
+          if (dDuskDur && document.activeElement !== dDuskDur) {
+            dDuskDur.value = String(data.duskDurationMin);
+          }
+        }
+
+        if (data.sleepNowActive !== undefined) {
+          updateSleepNowUI(!!data.sleepNowActive);
+        }
+
+        if (data.scheduleStatus) {
+          const pBadge = document.getElementById('sched-phase-badge');
+          const pText = document.getElementById('sched-phase-text');
+          if (pText) pText.innerText = data.scheduleStatus;
+          if (pBadge) {
+            if (data.scheduleStatus.includes('Рассвет')) {
+              pBadge.style.background = 'rgba(245, 158, 11, 0.15)';
+              pBadge.style.color = '#f59e0b';
+              pBadge.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+            } else if (data.scheduleStatus.includes('Отбой') || data.scheduleStatus.includes('Заснуть') || data.scheduleStatus.includes('Таймер сна')) {
+              pBadge.style.background = 'rgba(168, 85, 247, 0.15)';
+              pBadge.style.color = '#a855f7';
+              pBadge.style.borderColor = 'rgba(168, 85, 247, 0.4)';
+            } else {
+              pBadge.style.background = 'rgba(56, 189, 248, 0.12)';
+              pBadge.style.color = 'var(--primary)';
+              pBadge.style.borderColor = 'rgba(56, 189, 248, 0.3)';
+            }
+          }
+        }
+
         if (data.dawnEnabled !== undefined) {
           updateDawnUI(data.dawnEnabled);
         }
@@ -1358,10 +1494,10 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('telem-uptime').innerText = formatUptime(data.uptime || 0);
         document.getElementById('telem-heap').innerText = data.freeHeap || '--';
         document.getElementById('telem-imu').innerText = data.imuStatus || '--';
-        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.8.1');
+        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.8.2');
 
         // OTA info
-        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.8.1');
+        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.8.2');
         document.getElementById('ota-latest-ver').innerText = data.latestVersion ? ('v' + data.latestVersion) : 'не проверялась';
         document.getElementById('ota-status').innerText = data.otaStatus || 'Idle';
 

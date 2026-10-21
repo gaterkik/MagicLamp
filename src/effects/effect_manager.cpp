@@ -33,7 +33,10 @@ EffectManager::EffectManager()
       m_curtainStartTime(0),
       m_otaState(OTA_STATE_IDLE),
       m_otaProgress(0),
-      m_otaStateStartTime(0) {
+      m_otaStateStartTime(0),
+      m_sleepNowActive(false),
+      m_sleepNowStartMs(0),
+      m_sleepNowDurationMs(0) {
     // Initialize default profiles for all 16 built-in effects
     for (int i = 0; i < NUM_CORE_EFFECTS; i++) {
         m_profiles[i].brightness = 128;
@@ -126,8 +129,10 @@ void EffectManager::begin(LedMatrix& matrix) {
         m_schedule.duskHour = schPrefs.getUChar("sh", 23);
         m_schedule.duskMinute = schPrefs.getUChar("sm", 0);
     }
-    m_schedule.dawnDurationMin = schPrefs.getUChar("dd", 5);
-    m_schedule.duskDurationMin = schPrefs.getUChar("sd", 30);
+    m_schedule.dawnDurationMin = schPrefs.getUChar("dawn_dur", schPrefs.getUChar("dd", 5));
+    m_schedule.duskDurationMin = schPrefs.getUChar("dusk_dur", schPrefs.getUChar("sd", 30));
+    if (m_schedule.dawnDurationMin == 0) m_schedule.dawnDurationMin = 5;
+    if (m_schedule.duskDurationMin == 0) m_schedule.duskDurationMin = 30;
     m_schedule.enabled = m_schedule.isEnabled();
     schPrefs.end();
 
@@ -314,6 +319,10 @@ void EffectManager::setEffect(uint8_t index, LedMatrix& matrix) {
         index = 0;
     }
 
+    if (index != 1 && m_sleepNowActive) {
+        stopSleepNow();
+    }
+
     if (m_powerState && m_curtainState != CurtainState::CLOSED) {
         // Snapshot current frame buffer for 500 ms crossfade
         for (int i = 0; i < NUM_LEDS; i++) {
@@ -379,6 +388,7 @@ void EffectManager::powerOn() {
 }
 
 void EffectManager::powerOff() {
+    stopSleepNow();
     if (m_powerState || m_curtainState == CurtainState::OPENING || m_curtainState == CurtainState::OPEN) {
         m_powerState = false;
         m_curtainState = CurtainState::CLOSING;
@@ -573,17 +583,23 @@ void EffectManager::setCycleMask(uint16_t mask) {
 void EffectManager::setSchedule(const ScheduleConfig& cfg) {
     m_schedule = cfg;
     m_schedule.enabled = m_schedule.isEnabled();
+    if (m_schedule.dawnDurationMin == 0) m_schedule.dawnDurationMin = 5;
+    if (m_schedule.duskDurationMin == 0) m_schedule.duskDurationMin = 30;
 
     Preferences schPrefs;
     schPrefs.begin("schedule", false);
     schPrefs.putBool("dawn_en", m_schedule.dawnEnabled);
     schPrefs.putUChar("dawn_h", m_schedule.dawnHour);
     schPrefs.putUChar("dawn_m", m_schedule.dawnMinute);
+    schPrefs.putUChar("dawn_dur", m_schedule.dawnDurationMin);
+    schPrefs.putUChar("dd", m_schedule.dawnDurationMin);
+
     schPrefs.putBool("dusk_en", m_schedule.duskEnabled);
     schPrefs.putUChar("dusk_h", m_schedule.duskHour);
     schPrefs.putUChar("dusk_m", m_schedule.duskMinute);
-    schPrefs.putUChar("dd", m_schedule.dawnDurationMin);
+    schPrefs.putUChar("dusk_dur", m_schedule.duskDurationMin);
     schPrefs.putUChar("sd", m_schedule.duskDurationMin);
+
     schPrefs.putBool("en", m_schedule.enabled);
     schPrefs.putUChar("dh", m_schedule.dawnHour);
     schPrefs.putUChar("dm", m_schedule.dawnMinute);
@@ -594,6 +610,131 @@ void EffectManager::setSchedule(const ScheduleConfig& cfg) {
     Serial.printf("[Schedule] Saved: Dawn=%02d:%02d (en=%s, %d min), Dusk=%02d:%02d (en=%s, %d min)\n",
                   m_schedule.dawnHour, m_schedule.dawnMinute, m_schedule.dawnEnabled ? "YES" : "NO", m_schedule.dawnDurationMin,
                   m_schedule.duskHour, m_schedule.duskMinute, m_schedule.duskEnabled ? "YES" : "NO", m_schedule.duskDurationMin);
+}
+
+void EffectManager::setDawnDurationMin(uint8_t min) {
+    m_schedule.dawnDurationMin = (min > 0) ? min : 5;
+    setSchedule(m_schedule);
+}
+
+void EffectManager::setDuskDurationMin(uint8_t min) {
+    m_schedule.duskDurationMin = (min > 0) ? min : 30;
+    setSchedule(m_schedule);
+}
+
+void EffectManager::startSleepNow(LedMatrix& matrix) {
+    m_sleepNowActive = true;
+    m_sleepNowStartMs = millis();
+    uint8_t durMin = (m_schedule.duskDurationMin > 0) ? m_schedule.duskDurationMin : 30;
+    m_sleepNowDurationMs = static_cast<uint32_t>(durMin) * 60UL * 1000UL;
+
+    m_schedule.sleepNowActive = true;
+    m_schedule.sleepNowStartMs = m_sleepNowStartMs;
+    m_schedule.sleepNowDurationMs = m_sleepNowDurationMs;
+
+    if (!m_powerState) {
+        powerOn();
+    }
+    if (m_currentEffectIndex != 1) {
+        setEffect(1, matrix);
+    }
+    Serial.printf("[Schedule] Sleep Now started for %d min.\n", durMin);
+}
+
+void EffectManager::stopSleepNow() {
+    if (m_sleepNowActive) {
+        m_sleepNowActive = false;
+        m_schedule.sleepNowActive = false;
+        m_schedule.sleepNowStartMs = 0;
+        m_schedule.sleepNowDurationMs = 0;
+        Serial.println(F("[Schedule] Sleep Now stopped."));
+    }
+}
+
+String EffectManager::getScheduleStatus() const {
+    if (m_sleepNowActive) {
+        uint32_t elapsedMs = millis() - m_sleepNowStartMs;
+        if (elapsedMs < m_sleepNowDurationMs) {
+            uint32_t remSec = (m_sleepNowDurationMs - elapsedMs) / 1000;
+            uint32_t remMin = (remSec + 59) / 60;
+            return "Таймер сна активен (осталось " + String(remMin) + " мин)";
+        }
+        return "Таймер сна завершен";
+    }
+
+    if (!m_schedule.isEnabled()) {
+        return "Расписание выключено";
+    }
+
+    time_t rawtime;
+    time(&rawtime);
+    if (rawtime <= 100000) {
+        return "Ожидание NTP синхронизации";
+    }
+
+    time_t local = rawtime + TIMEZONE_OFFSET_SEC;
+    struct tm* ti = gmtime(&local);
+    if (!ti) return "Ожидание расписания";
+
+    int curSecOfDay = ti->tm_hour * 3600 + ti->tm_min * 60 + ti->tm_sec;
+
+    // Check Dawn
+    if (m_schedule.dawnEnabled) {
+        int dawnTargetMin = m_schedule.dawnHour * 60 + m_schedule.dawnMinute;
+        int dawnDurSec = (m_schedule.dawnDurationMin > 0 ? m_schedule.dawnDurationMin : 5) * 60;
+        int dawnTargetSec = dawnTargetMin * 60;
+        int dawnStartSec = (dawnTargetSec >= dawnDurSec) ? (dawnTargetSec - dawnDurSec) : (86400 + dawnTargetSec - dawnDurSec);
+
+        bool inDawn = false;
+        int elapsed = 0;
+        if (dawnStartSec <= dawnTargetSec) {
+            if (curSecOfDay >= dawnStartSec && curSecOfDay <= dawnTargetSec) {
+                inDawn = true;
+                elapsed = curSecOfDay - dawnStartSec;
+            }
+        } else {
+            if (curSecOfDay >= dawnStartSec || curSecOfDay <= dawnTargetSec) {
+                inDawn = true;
+                elapsed = (curSecOfDay >= dawnStartSec) ? (curSecOfDay - dawnStartSec) : (86400 - dawnStartSec + curSecOfDay);
+            }
+        }
+        if (inDawn) {
+            int remSec = dawnDurSec - elapsed;
+            if (remSec < 0) remSec = 0;
+            int remMin = (remSec + 59) / 60;
+            return "Рассвет активен (осталось " + String(remMin) + " мин)";
+        }
+    }
+
+    // Check Dusk
+    if (m_schedule.duskEnabled) {
+        int duskTargetMin = m_schedule.duskHour * 60 + m_schedule.duskMinute;
+        int duskDurSec = (m_schedule.duskDurationMin > 0 ? m_schedule.duskDurationMin : 30) * 60;
+        int duskTargetSec = duskTargetMin * 60;
+        int duskStartSec = (duskTargetSec >= duskDurSec) ? (duskTargetSec - duskDurSec) : (86400 + duskTargetSec - duskDurSec);
+
+        bool inDusk = false;
+        int elapsed = 0;
+        if (duskStartSec <= duskTargetSec) {
+            if (curSecOfDay >= duskStartSec && curSecOfDay <= duskTargetSec) {
+                inDusk = true;
+                elapsed = curSecOfDay - duskStartSec;
+            }
+        } else {
+            if (curSecOfDay >= duskStartSec || curSecOfDay <= duskTargetSec) {
+                inDusk = true;
+                elapsed = (curSecOfDay >= duskStartSec) ? (curSecOfDay - duskStartSec) : (86400 - duskStartSec + curSecOfDay);
+            }
+        }
+        if (inDusk) {
+            int remSec = duskDurSec - elapsed;
+            if (remSec < 0) remSec = 0;
+            int remMin = (remSec + 59) / 60;
+            return "Таймер сна активен (осталось " + String(remMin) + " мин)";
+        }
+    }
+
+    return "Ожидание расписания";
 }
 
 void EffectManager::markProfilesDirty() {
@@ -615,6 +756,24 @@ void EffectManager::updateProfilesNvs() {
 }
 
 void EffectManager::updateSchedule(LedMatrix& matrix) {
+    // 0. Sleep Now mode active
+    if (m_sleepNowActive) {
+        uint32_t elapsed = millis() - m_sleepNowStartMs;
+        if (elapsed >= m_sleepNowDurationMs) {
+            Serial.println(F("[Schedule] Sleep Now timer complete: turning OFF lamp."));
+            stopSleepNow();
+            powerOff();
+            return;
+        }
+        if (!m_powerState) {
+            powerOn();
+        }
+        if (m_currentEffectIndex != 1) {
+            setEffect(1, matrix);
+        }
+        return;
+    }
+
     if (!m_schedule.isEnabled()) return;
 
     uint32_t now = millis();
@@ -634,7 +793,7 @@ void EffectManager::updateSchedule(LedMatrix& matrix) {
     // 1. Dawn Alarm (Wake-up)
     if (m_schedule.dawnEnabled) {
         int dawnTargetMin = m_schedule.dawnHour * 60 + m_schedule.dawnMinute;
-        int dawnDurSec = (m_schedule.dawnDurationMin > 0 ? m_schedule.dawnDurationMin : 5) * 60; // 5 min ramp
+        int dawnDurSec = (m_schedule.dawnDurationMin > 0 ? m_schedule.dawnDurationMin : 5) * 60;
         int dawnTargetSec = dawnTargetMin * 60;
         int dawnStartSec = (dawnTargetSec >= dawnDurSec) ? (dawnTargetSec - dawnDurSec) : (86400 + dawnTargetSec - dawnDurSec);
 
@@ -645,7 +804,7 @@ void EffectManager::updateSchedule(LedMatrix& matrix) {
             if (curSecOfDay >= dawnStartSec || curSecOfDay <= dawnTargetSec) inDawn = true;
         }
 
-        // 5 minutes before alarm time: turn ON lamp from any state and start Dawn mode
+        // Within wake-up ramp before alarm time: turn ON lamp from any state and start Dawn mode
         if (inDawn) {
             if (!m_powerState) {
                 Serial.println(F("[Schedule] Dawn alarm triggered: turning ON lamp in Dawn mode."));
@@ -659,16 +818,16 @@ void EffectManager::updateSchedule(LedMatrix& matrix) {
 
     // 2. Dusk Sleep Timer
     if (m_schedule.duskEnabled) {
-        int duskStartMin = m_schedule.duskHour * 60 + m_schedule.duskMinute;
-        int duskDurSec = (m_schedule.duskDurationMin > 0 ? m_schedule.duskDurationMin : 30) * 60; // 30 min amber fade
-        int duskStartSec = duskStartMin * 60;
-        int duskEndSec = (duskStartSec + duskDurSec) % 86400;
+        int duskTargetMin = m_schedule.duskHour * 60 + m_schedule.duskMinute;
+        int duskDurSec = (m_schedule.duskDurationMin > 0 ? m_schedule.duskDurationMin : 30) * 60;
+        int duskTargetSec = duskTargetMin * 60;
+        int duskStartSec = (duskTargetSec >= duskDurSec) ? (duskTargetSec - duskDurSec) : (86400 + duskTargetSec - duskDurSec);
 
         bool inDusk = false;
-        if (duskStartSec <= (duskStartSec + duskDurSec) && (duskStartSec + duskDurSec) < 86400) {
-            if (curSecOfDay >= duskStartSec && curSecOfDay < (duskStartSec + duskDurSec)) inDusk = true;
+        if (duskStartSec <= duskTargetSec) {
+            if (curSecOfDay >= duskStartSec && curSecOfDay <= duskTargetSec) inDusk = true;
         } else {
-            if (curSecOfDay >= duskStartSec || curSecOfDay < duskEndSec) inDusk = true;
+            if (curSecOfDay >= duskStartSec || curSecOfDay <= duskTargetSec) inDusk = true;
         }
 
         // In dusk window: regardless of active effect, switch to safe 1900K amber mode (DawnDusk effect index 1)
@@ -677,13 +836,10 @@ void EffectManager::updateSchedule(LedMatrix& matrix) {
                 Serial.println(F("[Schedule] Dusk sleep timer: switching to 1900K amber sleep mode."));
                 setEffect(1, matrix);
             }
-        }
-
-        // End of 30-min dusk window: turn OFF lamp completely
-        if (m_powerState && m_currentEffectIndex == 1) {
-            int endCheckSec = (duskStartSec + duskDurSec) % 86400;
-            if (abs(curSecOfDay - endCheckSec) <= 2) {
-                Serial.println(F("[Schedule] Dusk 30-min fade complete: turning OFF lamp."));
+            // Target moment reached -> turn OFF
+            int diffToTarget = (curSecOfDay >= duskTargetSec) ? (curSecOfDay - duskTargetSec) : (86400 - duskTargetSec + curSecOfDay);
+            if (curSecOfDay == duskTargetSec || diffToTarget <= 2) {
+                Serial.println(F("[Schedule] Dusk fade complete at target time: turning OFF lamp."));
                 powerOff();
             }
         }
