@@ -36,7 +36,11 @@ EffectManager::EffectManager()
       m_otaStateStartTime(0),
       m_sleepNowActive(false),
       m_sleepNowStartMs(0),
-      m_sleepNowDurationMs(0) {
+      m_sleepNowDurationMs(0),
+      m_radioAnimActive(false),
+      m_radioAnimIsZigbee(false),
+      m_radioAnimStartMs(0),
+      m_zigbeePairingMode(false) {
     // Initialize default profiles for all 15 built-in effects
     for (int i = 0; i < NUM_CORE_EFFECTS; i++) {
         m_profiles[i].brightness = 128;
@@ -189,6 +193,25 @@ void EffectManager::update(LedMatrix& matrix, const MicI2S& mic) {
     // If OTA update/check is in progress, render OTA animation exclusively and block effects
     if (m_otaState != OTA_STATE_IDLE) {
         renderOta(matrix);
+        return;
+    }
+
+    // Radio Mode Switch Animation (2-second non-blocking transition)
+    if (m_radioAnimActive) {
+        uint32_t elapsed = millis() - m_radioAnimStartMs;
+        if (elapsed >= 2000) {
+            m_radioAnimActive = false;
+        } else {
+            renderRadioModeAnimation(matrix, elapsed);
+            matrix.show();
+            return;
+        }
+    }
+
+    // Zigbee Pairing Mode indication (breathing Alice purple belt at equator Y=7..8)
+    if (m_zigbeePairingMode && m_powerState) {
+        renderZigbeePairing(matrix);
+        matrix.show();
         return;
     }
 
@@ -1058,4 +1081,99 @@ const char* EffectManager::getEffectName(uint8_t index) const {
         return m_effects[index]->getName();
     }
     return "Unknown";
+}
+
+void EffectManager::triggerRadioModeAnimation(bool isZigbee) {
+    m_radioAnimActive = true;
+    m_radioAnimIsZigbee = isZigbee;
+    m_radioAnimStartMs = millis();
+}
+
+void EffectManager::setZigbeePairingMode(bool active) {
+    m_zigbeePairingMode = active;
+}
+
+void EffectManager::renderRadioModeAnimation(LedMatrix& matrix, uint32_t elapsed) {
+    matrix.clear(false);
+
+    if (m_radioAnimIsZigbee) {
+        // Zigbee: 2-second convergence of purple-gold rings from Y=15 and Y=0 towards Y=7..8, with center flash
+        float progress = static_cast<float>(elapsed) / 2000.0f;
+        if (progress > 1.0f) progress = 1.0f;
+
+        if (progress < 0.75f) {
+            // Convergence phase (0..1500 ms)
+            float pConv = progress / 0.75f;
+            float topY = 15.0f - pConv * 7.5f; // from 15.0 down to 7.5
+            float botY = 0.0f + pConv * 7.5f;  // from 0.0 up to 7.5
+
+            CRGB purple = CRGB(180, 0, 255);
+            CRGB gold = CRGB(255, 180, 20);
+
+            for (int y = 0; y < MATRIX_HEIGHT; y++) {
+                float distTop = fabsf(static_cast<float>(y) - topY);
+                float distBot = fabsf(static_cast<float>(y) - botY);
+                float briTop = fmaxf(0.0f, 1.0f - distTop * 0.85f);
+                float briBot = fmaxf(0.0f, 1.0f - distBot * 0.85f);
+
+                if (briTop > 0.01f || briBot > 0.01f) {
+                    for (int x = 0; x < MATRIX_WIDTH; x++) {
+                        CRGB colTop = blend(purple, gold, (sinf(static_cast<float>(x) * 0.5f + progress * 8.0f) + 1.0f) * 127);
+                        CRGB colBot = blend(gold, purple, (cosf(static_cast<float>(x) * 0.5f + progress * 8.0f) + 1.0f) * 127);
+                        colTop.nscale8_video(static_cast<uint8_t>(briTop * 255.0f));
+                        colBot.nscale8_video(static_cast<uint8_t>(briBot * 255.0f));
+                        matrix.setPixel(x, y, colTop + colBot);
+                    }
+                }
+            }
+        } else {
+            // Flash phase at center Y=7..8 (1500..2000 ms)
+            float pFlash = (progress - 0.75f) / 0.25f; // 0.0 .. 1.0
+            float intensity = sinf((1.0f - pFlash) * 3.14159265f * 0.5f); // 1.0 -> 0.0
+
+            for (int y = 5; y <= 10; y++) {
+                float dist = fabsf(static_cast<float>(y) - 7.5f);
+                float bri = fmaxf(0.0f, 1.0f - dist * 0.35f) * intensity;
+                uint8_t bVal = static_cast<uint8_t>(bri * 255.0f);
+                for (int x = 0; x < MATRIX_WIDTH; x++) {
+                    CRGB flashCol = blend(CRGB(255, 220, 120), CRGB(200, 50, 255), (sinf(static_cast<float>(x) * 0.5f) + 1.0f) * 127);
+                    flashCol.nscale8_video(bVal);
+                    matrix.setPixel(x, y, flashCol);
+                }
+            }
+        }
+    } else {
+        // Wi-Fi: 2-second rotating bright-green beacon on rings Y=14..15
+        float angle = (static_cast<float>(elapsed) / 2000.0f) * 4.0f * 3.14159265f; // 2 revolutions in 2s
+        CRGB beaconGreen = CRGB(0, 255, 60);
+
+        for (int x = 0; x < MATRIX_WIDTH; x++) {
+            float xAngle = (static_cast<float>(x) / 16.0f) * 2.0f * 3.14159265f;
+            float diff = fmodf(angle - xAngle + 4.0f * 3.14159265f, 2.0f * 3.14159265f);
+            float trail = fmaxf(0.0f, 1.0f - diff / (3.14159265f * 0.75f));
+            trail = trail * trail; // Sharp head, smooth tail
+            CRGB col = beaconGreen;
+            col.nscale8_video(static_cast<uint8_t>(trail * 255.0f));
+            if (diff < 0.35f) {
+                col += CRGB(80, 255, 140); // Intense highlight
+            }
+            matrix.setPixel(x, 14, col);
+            matrix.setPixel(x, 15, col);
+        }
+    }
+}
+
+void EffectManager::renderZigbeePairing(LedMatrix& matrix) {
+    matrix.clear(false);
+    // Smooth breathing purple belt on equator Y=7..8 (~2.0 s full breath cycle)
+    float phase = static_cast<float>(millis() % 2000) / 2000.0f;
+    float breath = (sinf(phase * 2.0f * 3.14159265f) + 1.0f) * 0.5f; // 0.0 .. 1.0
+    uint8_t bri = 35 + static_cast<uint8_t>(breath * 220.0f);
+    CRGB alicePurple = CRGB(140, 20, 255);
+    alicePurple.nscale8_video(bri);
+
+    for (int x = 0; x < MATRIX_WIDTH; x++) {
+        matrix.setPixel(x, 7, alicePurple);
+        matrix.setPixel(x, 8, alicePurple);
+    }
 }

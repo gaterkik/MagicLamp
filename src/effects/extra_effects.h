@@ -120,4 +120,6 @@ private:
     CRGBPalette16 m_palette;
     uint32_t m_lastFrameTime;
     float m_phase;
+    float m_pulseRadius;
+    float m_pulseSpeed;
 };

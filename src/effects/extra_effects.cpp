@@ -355,25 +355,27 @@ void EffectFireworks::update(LedMatrix& matrix, const MicI2S& /*mic*/) {
 
 EffectCyberPulse::EffectCyberPulse()
     : m_lastFrameTime(0),
-      m_phase(0.0f) {
+      m_phase(0.0f),
+      m_pulseRadius(0.0f),
+      m_pulseSpeed(6.0f) {
     m_speed = 128;
     m_palette = CRGBPalette16(
-        CRGB(30, 0, 60),     // Deep violet
-        CRGB(80, 0, 120),    // Purple
-        CRGB(150, 0, 180),   // Neon purple
-        CRGB(220, 0, 200),   // Magenta
-        CRGB(255, 0, 140),   // Hot pink
-        CRGB(255, 40, 180),  // Neon pink
-        CRGB(180, 0, 240),   // Electric violet
-        CRGB(100, 0, 255),   // Deep blue-violet
-        CRGB(0, 80, 255),    // Electric blue
-        CRGB(0, 160, 255),   // Neon blue
-        CRGB(0, 220, 240),   // Bright cyan
-        CRGB(0, 255, 255),   // Electric cyan
-        CRGB(180, 240, 255), // White-cyan highlight
-        CRGB(0, 220, 240),   // Bright cyan
-        CRGB(140, 0, 255),   // Purple
-        CRGB(255, 0, 140)    // Hot pink
+        CRGB(20, 0, 40),
+        CRGB(60, 0, 80),
+        CRGB(120, 0, 160),
+        CRGB(180, 0, 190),
+        CRGB(255, 0, 128),
+        CRGB(255, 40, 160),
+        CRGB(200, 0, 220),
+        CRGB(140, 0, 255),
+        CRGB(80, 0, 255),
+        CRGB(0, 120, 255),
+        CRGB(0, 200, 255),
+        CRGB(0, 240, 255),
+        CRGB(180, 240, 255),
+        CRGB(0, 240, 255),
+        CRGB(140, 0, 255),
+        CRGB(255, 0, 128)
     );
 }
 
@@ -381,6 +383,8 @@ void EffectCyberPulse::init(LedMatrix& matrix) {
     matrix.clear(false);
     m_lastFrameTime = millis();
     m_phase = 0.0f;
+    m_pulseRadius = 0.0f;
+    m_pulseSpeed = 6.0f;
 }
 
 void EffectCyberPulse::update(LedMatrix& matrix, const MicI2S& /*mic*/) {
@@ -389,47 +393,27 @@ void EffectCyberPulse::update(LedMatrix& matrix, const MicI2S& /*mic*/) {
     if (dt <= 0.0f || dt > 0.1f) dt = 0.016f;
     m_lastFrameTime = now;
 
-    float speedMult = static_cast<float>(m_speed) / 128.0f;
-    m_phase += speedMult * dt * 2.5f;
+    float speedMult = (float)m_speed / 128.0f;
+    m_phase += speedMult * dt * 2.0f;
+    m_pulseRadius += m_pulseSpeed * dt * speedMult;
+    if (m_pulseRadius > 14.0f) m_pulseRadius = 0.0f;
 
-    // Generative mathematical cyber-grid & neon interference waves
     for (uint8_t x = 0; x < MATRIX_WIDTH; x++) {
-        float normX = static_cast<float>(x) / static_cast<float>(MATRIX_WIDTH);
+        float normX = (float)x / 16.0f;
         float theta = normX * 2.0f * M_PI;
-
         for (uint8_t y = 0; y < MATRIX_HEIGHT; y++) {
-            float yF = static_cast<float>(y);
-            float distFromCenter = fabsf(yF - 7.5f);
-
-            // 1. Undulating cylindrical cyber-grid (vertical & horizontal neon lines)
-            float gridWaveX = (sinf(theta * 3.0f + m_phase) + 1.0f) * 0.5f;
-            float gridWaveY = (sinf(yF * 0.7f - m_phase * 1.6f) + 1.0f) * 0.5f;
-            float gridPattern = gridWaveX * 0.5f + gridWaveY * 0.5f;
-
-            // 2. Horizontal scanlines traveling vertically
-            float scanline = (sinf(yF * 1.3f - m_phase * 3.0f) > 0.65f) ? 0.35f : 0.08f;
-
-            // 3. Diagonal harmonic interference wave
-            float diagWave = (sinf(theta * 2.0f + yF * 0.5f + m_phase * 1.4f) + 1.0f) * 0.5f;
-
-            // 4. Center-expanding pulse rings (traveling from equator Y=7.5 outward to Y=0 and Y=15)
-            float ringPhase = fmodf(m_phase * 1.8f, 9.0f);
-            float distToRing = fabsf(distFromCenter - ringPhase);
-            float pulseGlow = (distToRing < 1.6f) ? (1.0f - distToRing / 1.6f) : 0.0f;
-
-            float intensity = fminf(1.0f, gridPattern * 0.45f + scanline + diagWave * 0.35f + pulseGlow * 0.65f);
-
-            uint8_t palIdx = static_cast<uint8_t>(x * 14 + y * 10 + static_cast<uint8_t>(m_phase * 28.0f));
-            uint8_t bri = static_cast<uint8_t>(intensity * 255.0f);
-            CRGB pixel = ColorFromPalette(m_palette, palIdx, bri, LINEARBLEND);
-
-            // Add electric highlight on pulse ring crest
-            if (pulseGlow > 0.6f) {
-                uint8_t highlight = static_cast<uint8_t>((pulseGlow - 0.6f) * 2.5f * 200.0f);
-                pixel += CRGB(highlight / 3, highlight, highlight);
+            float dy = fabsf((float)y - 7.5f);
+            float distToPulse = fabsf(dy - m_pulseRadius);
+            float ring = fmaxf(0.0f, 1.0f - distToPulse * 0.7f);
+            float wave = (sinf(theta * 4.0f + m_phase * 2.0f) + 1.0f) * 0.3f;
+            float total = fminf(1.0f, ring + wave * 0.7f);
+            if (total > 0.1f) {
+                uint8_t palIdx = (uint8_t)(total * 180.0f + y * 8 + (uint8_t)(m_phase * 20.0f));
+                uint8_t bri = (uint8_t)(total * 255.0f);
+                matrix.setPixel(x, y, ColorFromPalette(m_palette, palIdx, bri, LINEARBLEND));
+            } else {
+                matrix.setPixel(x, y, CRGB::Black);
             }
-
-            matrix.setPixel(x, y, pixel);
         }
     }
 }

@@ -106,9 +106,22 @@ void loop() {
                 break;
 
             case BUTTON_EVENT_FOUR_CLICKS:
-                // 4 clicks: Force 10-minute Wi-Fi session
-                Serial.println(F("[Control] 4 clicks: Requesting 10 min Wi-Fi session..."));
-                zigbeeManager.requestWifiSession(600000, &wifiManager, &effectManager, true);
+                // 4 clicks: Toggle radio mode Wi-Fi <-> Zigbee
+                Serial.println(F("[Control] 4 clicks: Toggling Radio Mode (Wi-Fi <-> Zigbee)..."));
+                if (zigbeeManager.isZigbee() || zigbeeManager.getActiveRadio() == RADIO_MODE_ZIGBEE) {
+                    // Switch from Zigbee to Wi-Fi
+                    zigbeeManager.stopPairing(&effectManager);
+                    zigbeeManager.setMode(RADIO_MODE_WIFI, false, &effectManager, &wifiManager);
+                    effectManager.triggerRadioModeAnimation(false);
+                    wifiManager.begin();
+                    Serial.println(F("[Control] Switched to Wi-Fi mode."));
+                } else {
+                    // Switch from Wi-Fi to Zigbee with 180s pairing
+                    zigbeeManager.setMode(RADIO_MODE_ZIGBEE, false, &effectManager, &wifiManager);
+                    effectManager.triggerRadioModeAnimation(true);
+                    zigbeeManager.startPairing(&effectManager);
+                    Serial.println(F("[Control] Switched to Zigbee mode. Pairing started (180s)..."));
+                }
                 break;
 
             case BUTTON_EVENT_SEVEN_CLICKS:

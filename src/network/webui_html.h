@@ -720,18 +720,12 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
         </div>
       </div>
-
-      <!-- Кнопка быстрого действия «Заснуть сейчас» -->
-      <button id="btn-sleep-now" class="btn" style="background:linear-gradient(135deg, #f59e0b, #d97706); color:#fff; width:100%; font-weight:600; padding:11px 16px; margin-top:14px; font-size:0.92rem;" onclick="triggerSleepNow()">
-        <span id="sleep-now-icon">&#128564;</span>
-        <span id="sleep-now-text">Заснуть сейчас (Таймер сна)</span>
-      </button>
     </section>
 
-    <!-- 16 BUILT-IN EFFECTS ACCORDION -->
+    <!-- BUILT-IN EFFECTS ACCORDION -->
     <section class="card">
       <div class="card-title">
-        <span>&#10024; Эффекты лампы (16 встроенных режимов)</span>
+        <span>&#10024; Эффекты лампы</span>
         <span style="font-size:0.76rem; font-weight:normal; color:var(--text-muted);">2 клика кнопки циклируют отмеченные &#9745;</span>
       </div>
 
@@ -1045,7 +1039,6 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // Schedule actions (Independent Dawn Alarm and Dusk Sleep Timer)
     let isDawnEnabled = false;
     let isDuskEnabled = false;
-    let isSleepNowActive = false;
 
     function onDawnDurationChange(val) {
       sendControl({ dawnDurationMin: parseInt(val, 10) });
@@ -1053,43 +1046,6 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     function onDuskDurationChange(val) {
       sendControl({ duskDurationMin: parseInt(val, 10) });
-    }
-
-    async function triggerSleepNow() {
-      const btn = document.getElementById('btn-sleep-now');
-      btn.disabled = true;
-      const willEnable = !isSleepNowActive;
-      try {
-        const res = await fetch('/api/schedule/sleep_now', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enable: willEnable })
-        });
-        const data = await res.json();
-        updateSleepNowUI(!!data.sleepNowActive);
-      } catch (e) {
-        console.error('Sleep now error:', e);
-      } finally {
-        setTimeout(() => { btn.disabled = false; }, 500);
-      }
-    }
-
-    function updateSleepNowUI(active) {
-      isSleepNowActive = active;
-      const btn = document.getElementById('btn-sleep-now');
-      const icon = document.getElementById('sleep-now-icon');
-      const text = document.getElementById('sleep-now-text');
-      if (btn && text) {
-        if (active) {
-          btn.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
-          if (icon) icon.innerHTML = '&#9209;';
-          text.innerText = 'Отменить таймер сна';
-        } else {
-          btn.style.background = 'linear-gradient(135deg, #f59e0b, #d97706)';
-          if (icon) icon.innerHTML = '&#128564;';
-          text.innerText = 'Заснуть сейчас (Таймер сна)';
-        }
-      }
     }
 
     function toggleDawn(e) {
@@ -1312,10 +1268,6 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           if (dDuskDur && document.activeElement !== dDuskDur) {
             dDuskDur.value = String(data.duskDurationMin);
           }
-        }
-
-        if (data.sleepNowActive !== undefined) {
-          updateSleepNowUI(!!data.sleepNowActive);
         }
 
         if (data.scheduleStatus) {

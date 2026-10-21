@@ -695,14 +695,21 @@ void LampWebServer::handleRadioSwitch() {
 
     String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
     String modeStr = "";
+    uint8_t targetMode = RADIO_MODE_WIFI;
     if (getStringParam(m_server, body, "mode", modeStr)) {
         if (modeStr == "wifi") {
-            m_zigbee->setMode(RADIO_MODE_WIFI, true, m_effectMgr, m_wifi);
+            targetMode = RADIO_MODE_WIFI;
         } else if (modeStr == "zigbee") {
-            m_zigbee->setMode(RADIO_MODE_ZIGBEE, true, m_effectMgr, m_wifi);
+            targetMode = RADIO_MODE_ZIGBEE;
         }
     } else {
-        m_zigbee->toggleMode(m_effectMgr, m_wifi);
+        targetMode = (m_zigbee->getMode() == RADIO_MODE_WIFI) ? RADIO_MODE_ZIGBEE : RADIO_MODE_WIFI;
+    }
+
+    m_zigbee->setMode(targetMode, false, m_effectMgr, m_wifi);
+
+    if (m_effectMgr) {
+        m_effectMgr->triggerRadioModeAnimation(targetMode == RADIO_MODE_ZIGBEE);
     }
 
     String res = "{\"status\":\"ok\",\"radio_mode\":\"" + String(m_zigbee->getModeString()) + "\"}";

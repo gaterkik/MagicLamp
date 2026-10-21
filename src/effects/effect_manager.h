@@ -372,6 +372,32 @@ public:
      */
     CurtainState getCurtainState() const { return m_curtainState; }
 
+    /**
+     * @brief Trigger 2-second non-blocking radio mode switch animation:
+     * - isZigbee == true: 2-second convergence of purple-gold rings towards equator (Y=7..8) with central flash.
+     * - isZigbee == false: 2-second rotating bright-green beacon on top rings Y=14..15.
+     * @param isZigbee True if switching to Zigbee, false for Wi-Fi.
+     */
+    void triggerRadioModeAnimation(bool isZigbee);
+
+    /**
+     * @brief Check whether radio mode animation is currently active.
+     */
+    bool isRadioAnimActive() const { return m_radioAnimActive; }
+
+    /**
+     * @brief Set Zigbee / Alice pairing mode indicator state.
+     * When active and lamp is powered on and no other animation is playing,
+     * a breathing Alice purple belt pulses at center rings Y=7..8 on dark background.
+     * @param active True to enable pairing indicator, false to disable.
+     */
+    void setZigbeePairingMode(bool active);
+
+    /**
+     * @brief Check whether Zigbee pairing mode indicator is active.
+     */
+    bool isZigbeePairingMode() const { return m_zigbeePairingMode; }
+
 private:
     void markNvsDirty();
     void updateNvs();
@@ -381,6 +407,8 @@ private:
     void applyCurtain(LedMatrix& matrix);
     void renderLimitFlash(LedMatrix& matrix);
     void renderOta(LedMatrix& matrix);
+    void renderRadioModeAnimation(LedMatrix& matrix, uint32_t elapsed);
+    void renderZigbeePairing(LedMatrix& matrix);
 
     volatile OtaState m_otaState;
     volatile uint8_t m_otaProgress;
@@ -411,6 +439,11 @@ private:
 
     LimitFlashType m_limitFlashType;
     uint32_t m_limitFlashStartTime;
+
+    bool m_radioAnimActive;
+    bool m_radioAnimIsZigbee;
+    uint32_t m_radioAnimStartMs;
+    bool m_zigbeePairingMode;
 
     bool m_nvsDirty;
     uint32_t m_nvsDirtyTime;

@@ -17,7 +17,7 @@
 - **Фаза 2 (Task 2.1 – 2.4):** Движок 9 базовых эффектов и NVS — `DONE`
 - **Фаза 3 (Task 3.1 – 3.4):** Калибровка железа, 10-й эффект, Wi-Fi, WebUI, Silent OTA — `DONE`
 - **Фаза 4 (Task 4.1 – 4.7):** Магазин эффектов, EffectVM, v0.6.0 Профили эффектов в NVS, NTP Будильник Рассвет/Отбой, Аудио и Скорость — `DONE`
-- **Фаза 5 (Task 5.1 – 5.6):** Apple UX, 15 встроенных эффектов, релизы v0.8.0 – v0.9.0 — `DONE`
+- **Фаза 5 (Task 5.1 – 5.7):** Apple UX, 15 встроенных эффектов, релизы v0.8.0 – v0.9.5 — `DONE`
 
 ---
 
@@ -474,5 +474,23 @@
   2. В проекте отсутствуют файлы `imu_mpu6050.*`, эффект `SandHourglass` и эндпоинт `/api/imu/diag`; общее число эффектов равно 15.
   3. Эффект `CyberPulse` не использует микрофон и регулируется ползунками Яркость и Скорость.
   4. Сброс Wi-Fi срабатывает строго по 7 кликам (`BUTTON_EVENT_SEVEN_CLICKS`).
+  5. Сборка `pio run` завершается со статусом `SUCCESS`.
+- **QA_Notes:** Проверено QA: замечаний нет.
+
+---
+
+### [Task 5.7] Предфинальный релиз v0.9.5: Возврат оригинального CyberPulse из Git v0.5.0, исправление реакции на 4 клика, режим сопряжения Zigbee с индикацией поиска Алисы и чистка WebUI
+- **Status:** `DONE`
+- **Files:** `include/version.h`, `include/config.h`, `src/hal/button.h`, `src/hal/button.cpp`, `src/effects/extra_effects.h`, `src/effects/extra_effects.cpp`, `src/effects/effect_manager.h`, `src/effects/effect_manager.cpp`, `src/network/webui_html.h`, `src/network/web_server.h`, `src/network/web_server.cpp`, `src/network/zigbee_manager.h`, `src/network/zigbee_manager.cpp`, `src/main.cpp`
+- **Description:**
+  1. Поднять `FIRMWARE_VERSION` в `include/version.h` до `"0.9.5"`.
+  2. Извлечь через `git show v0.5.0:src/effects/effect_vm.cpp` оригинальный код рендеринга `cyber_pulse` и восстановить его в `CyberPulse` с регулировкой яркости и скорости.
+  3. В `webui_html.h` заменить заголовок «Эффекты лампы (16 встроенных режимов)» на просто «Эффекты лампы» и полностью удалить кнопку «Заснуть сейчас» (и связанный с ней JS-обработчик).
+  4. Исправить обработку `BUTTON_EVENT_FOUR_CLICKS` в `button.cpp`, `main.cpp`, `effect_manager.cpp` и `zigbee_manager.cpp`: по 4 кликам и из WebUI четко запускать 2-секундную анимацию перехода (пурпурно-золотые кольца к центру для Zigbee / зеленый маяк сверху для Wi-Fi), визуальный режим ожидания сопряжения с Алисой (дышащее фиолетовое кольцо в центре) и возврат в Wi-Fi по повторным 4 кликам или таймауту 180 с.
+- **Acceptance Criteria (Критерии для QA):**
+  1. `FIRMWARE_VERSION` равна `"0.9.5"`.
+  2. В `webui_html.h` отсутствуют строка `16 встроенных` и кнопка `Заснуть сейчас`.
+  3. Код эффекта `CyberPulse` соответствует оригинальной волновой формуле из `v0.5.0`.
+  4. Нажатие 4 кликов (`BUTTON_EVENT_FOUR_CLICKS`) гарантированно запускает визуальную анимацию на матрице и переключает режим в `ZigbeeManager`.
   5. Сборка `pio run` завершается со статусом `SUCCESS`.
 - **QA_Notes:** Проверено QA: замечаний нет.

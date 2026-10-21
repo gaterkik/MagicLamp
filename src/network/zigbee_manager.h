@@ -107,6 +107,21 @@ public:
     void handleZigbeeColor(uint8_t hue, uint8_t saturation, EffectManager& effectMgr, LedMatrix& matrix);
     void handleZigbeeColorTemp(uint16_t mireds, EffectManager& effectMgr, LedMatrix& matrix);
 
+    /**
+     * @brief Start 180-second Zigbee pairing / commissioning mode with Alice purple breathing indicator.
+     */
+    void startPairing(EffectManager* eff = nullptr);
+
+    /**
+     * @brief Stop Zigbee pairing mode and turn off breathing indicator.
+     */
+    void stopPairing(EffectManager* eff = nullptr);
+
+    /**
+     * @brief Check if Zigbee pairing / commissioning is active.
+     */
+    bool isPairing() const { return m_pairingActive; }
+
 private:
     uint8_t m_mode;             // Configured radio mode in NVS
     uint8_t m_activeRadio;      // Currently active physical radio
@@ -116,7 +131,11 @@ private:
     uint32_t m_wifiStayActiveUntilMs;
     bool m_nightlyCheckDone;
 
+    bool m_pairingActive;
+    uint32_t m_pairingStartMs;
+
     static constexpr uint32_t BOOT_WIFI_WINDOW_MS = 60000;      // 60 seconds
     static constexpr uint32_t HTTP_WIFI_EXTENSION_MS = 600000;  // 10 minutes
     static constexpr uint32_t NIGHTLY_CHECK_WINDOW_MS = 45000;  // 45 seconds
+    static constexpr uint32_t ZIGBEE_PAIRING_TIMEOUT_MS = 180000; // 180 seconds pairing window
 };
