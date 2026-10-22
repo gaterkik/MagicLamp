@@ -40,7 +40,9 @@ EffectManager::EffectManager()
       m_radioAnimActive(false),
       m_radioAnimIsZigbee(false),
       m_radioAnimStartMs(0),
-      m_zigbeePairingMode(false) {
+      m_zigbeePairingMode(false),
+      m_successWaveActive(false),
+      m_successWaveStartMs(0) {
     // Initialize default profiles for all 15 built-in effects
     for (int i = 0; i < NUM_CORE_EFFECTS; i++) {
         m_profiles[i].brightness = 128;
@@ -203,6 +205,28 @@ void EffectManager::update(LedMatrix& matrix, const MicI2S& mic) {
             m_radioAnimActive = false;
         } else {
             renderRadioModeAnimation(matrix, elapsed);
+            matrix.show();
+            return;
+        }
+    }
+
+    // Success wave animation (1.5-second emerald-green wave upon Zigbee connection)
+    if (m_successWaveActive && m_powerState) {
+        uint32_t elapsed = millis() - m_successWaveStartMs;
+        if (elapsed >= 1500) {
+            m_successWaveActive = false;
+        } else {
+            matrix.clear(false);
+            float phase = static_cast<float>(elapsed) / 1500.0f;
+            float waveCenter = phase * 18.0f;
+            for (int y = 0; y < MATRIX_HEIGHT; y++) {
+                float dist = fabsf(static_cast<float>(y) - waveCenter);
+                float bright = fmaxf(0.12f, 1.0f - dist * 0.28f);
+                CRGB col = CRGB(0, static_cast<uint8_t>(bright * 255), static_cast<uint8_t>(bright * 120));
+                for (int x = 0; x < MATRIX_WIDTH; x++) {
+                    matrix.setPixel(x, y, col);
+                }
+            }
             matrix.show();
             return;
         }
@@ -1177,3 +1201,10 @@ void EffectManager::renderZigbeePairing(LedMatrix& matrix) {
         matrix.setPixel(x, 8, alicePurple);
     }
 }
+
+void EffectManager::triggerSuccessWave() {
+    m_successWaveActive = true;
+    m_successWaveStartMs = millis();
+    m_zigbeePairingMode = false;
+}
+

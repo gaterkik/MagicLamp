@@ -398,6 +398,21 @@ public:
      */
     bool isZigbeePairingMode() const { return m_zigbeePairingMode; }
 
+    /**
+     * @brief Trigger 1.5-second emerald-green wave across the cylinder upon successful Zigbee connection.
+     */
+    void triggerSuccessWave();
+
+    /**
+     * @brief Check whether success wave animation is active.
+     */
+    bool isSuccessWaveActive() const { return m_successWaveActive; }
+
+    /**
+     * @brief Render radio mode animation frame for given elapsed time.
+     */
+    void renderRadioModeAnimation(LedMatrix& matrix, uint32_t elapsed);
+
 private:
     void markNvsDirty();
     void updateNvs();
@@ -407,7 +422,6 @@ private:
     void applyCurtain(LedMatrix& matrix);
     void renderLimitFlash(LedMatrix& matrix);
     void renderOta(LedMatrix& matrix);
-    void renderRadioModeAnimation(LedMatrix& matrix, uint32_t elapsed);
     void renderZigbeePairing(LedMatrix& matrix);
 
     volatile OtaState m_otaState;
@@ -444,6 +458,8 @@ private:
     bool m_radioAnimIsZigbee;
     uint32_t m_radioAnimStartMs;
     bool m_zigbeePairingMode;
+    bool m_successWaveActive;
+    uint32_t m_successWaveStartMs;
 
     bool m_nvsDirty;
     uint32_t m_nvsDirtyTime;

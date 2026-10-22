@@ -17,7 +17,7 @@
 - **Фаза 2 (Task 2.1 – 2.4):** Движок 9 базовых эффектов и NVS — `DONE`
 - **Фаза 3 (Task 3.1 – 3.4):** Калибровка железа, 10-й эффект, Wi-Fi, WebUI, Silent OTA — `DONE`
 - **Фаза 4 (Task 4.1 – 4.7):** Магазин эффектов, EffectVM, v0.6.0 Профили эффектов в NVS, NTP Будильник Рассвет/Отбой, Аудио и Скорость — `DONE`
-- **Фаза 5 (Task 5.1 – 5.7):** Apple UX, 15 встроенных эффектов, релизы v0.8.0 – v0.9.5 — `DONE`
+- **Фаза 5 (Task 5.1 – 5.8):** Apple UX, 15 встроенных эффектов, релизы v0.8.0 – v0.9.6 — `DONE`
 
 ---
 
@@ -494,3 +494,24 @@
   4. Нажатие 4 кликов (`BUTTON_EVENT_FOUR_CLICKS`) гарантированно запускает визуальную анимацию на матрице и переключает режим в `ZigbeeManager`.
   5. Сборка `pio run` завершается со статусом `SUCCESS`.
 - **QA_Notes:** Проверено QA: замечаний нет.
+
+---
+
+### [Task 5.8] Релиз v0.9.6: Интеграция реального аппаратного стека <Zigbee.h> (ZigbeeColorDimmableLight), чистый Boot-Switch радиомодулей через NVS, оптимизация размера прошивки и Бортовой журнал в WebUI
+- **Status:** `DONE`
+- **Files:** `include/version.h`, `platformio.ini`, `src/network/zigbee_manager.h`, `src/network/zigbee_manager.cpp`, `src/network/web_server.h`, `src/network/web_server.cpp`, `src/network/webui_html.h`, `src/effects/effect_manager.h`, `src/effects/effect_manager.cpp`, `src/main.cpp`
+- **Description:**
+  1. Поднять `FIRMWARE_VERSION` в `include/version.h` до `"0.9.6"`.
+  2. Добавить в `platformio.ini` флаги оптимизации размера (`-Os`, `-DCORE_DEBUG_LEVEL=0`, `-ffunction-sections`, `-fdata-sections`, `-Wl,--gc-sections`), чтобы бинарник с реальным стеком `<Zigbee.h>` гарантированно помещался в раздел `0x1C0000` (1 835 008 байт).
+  3. Заменить программную заглушку в `src/network/zigbee_manager.*` на реальный аппаратный стек `<Zigbee.h>` (`ZigbeeColorDimmableLight` на Endpoint 10, производитель `"MagicLamp"`, модель `"MagicLamp-C6"`).
+  4. Реализовать чистую смену радиостека через сохранение режима в NVS (`Preferences "radio"`) и быструю перезагрузку `ESP.restart()`, индикацию 1.5-секундной зеленой вспышки при `Zigbee.connected() == true` и автовозврат в Wi-Fi через 180 с, если устройство не было привязано к хабу.
+  5. Привязать коллбэки `zbLight.onLightChangeRgb(...)` / `zbLight.onLightChangeHsv(...)` к `EffectManager`:
+     - `state` (On/Off) -> `powerOn()` / `powerOff()`;
+     - `level` (0..255) -> установка яркости текущего эффекта;
+     - цвет (`red, green, blue` / `hue, saturation`) -> вычисление оттенка Hue и переключение на соответствующий из 15 эффектов (если Saturation < 30 — включать «Ночник» с температурой света `colorTemp`).
+  6. Добавить сохранение отчета Zigbee-сессии в NVS (`Preferences "sys_log"`) и вывод блока «Бортовой журнал / Статус Zigbee» в `/api/status` и `webui_html.h`.
+- **Acceptance Criteria (Критерии для QA):**
+  1. `FIRMWARE_VERSION` равна `"0.9.6"`.
+  2. В `zigbee_manager.cpp` подключен `<Zigbee.h>` (или `<esp_zigbee_core.h>`) и вызываются реальные методы инициализации радиостека 802.15.4 и `ZigbeeColorDimmableLight` (заглушки удалены).
+  3. Сборка `pio run` завершается со статусом `SUCCESS`, а размер `.pio/build/esp32-c6/firmware.bin` строго меньше `1835008` байт (`0x1C0000`).
+- **QA_Notes:** Проверено QA: замечаний нет. Сборка SUCCESS, размер firmware.bin 1830224 байт (< 1835008 байт), FIRMWARE_VERSION 0.9.6, реальный аппаратный стек <Zigbee.h> интегрирован.

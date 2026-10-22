@@ -4,6 +4,54 @@
 #include "ota_github.h"
 #include <time.h>
 
+static ZigbeeColorDimmableLight zbLight(ZIGBEE_LIGHT_ENDPOINT);
+static EffectManager* s_effMgr = nullptr;
+static LedMatrix* s_ledMatrix = nullptr;
+
+static void onZigbeeLightChangeRgb(bool state, uint8_t red, uint8_t green, uint8_t blue, uint8_t level) {
+    if (!s_effMgr) return;
+    if (!state) {
+        s_effMgr->powerOff();
+        return;
+    }
+    s_effMgr->powerOn();
+    s_effMgr->setBrightness(level);
+
+    CRGB col = CRGB(red, green, blue);
+    CHSV hsv = rgb2hsv_approximate(col);
+    if (s_ledMatrix) {
+        ZigbeeManager::handleZigbeeColor(hsv.hue, hsv.sat, *s_effMgr, *s_ledMatrix);
+    }
+}
+
+static void onZigbeeLightChangeHsv(bool state, uint8_t hue, uint8_t saturation, uint8_t value) {
+    if (!s_effMgr) return;
+    if (!state) {
+        s_effMgr->powerOff();
+        return;
+    }
+    s_effMgr->powerOn();
+    s_effMgr->setBrightness(value);
+
+    if (s_ledMatrix) {
+        ZigbeeManager::handleZigbeeColor(hue, saturation, *s_effMgr, *s_ledMatrix);
+    }
+}
+
+static void onZigbeeLightChangeTemp(bool state, uint8_t level, uint16_t color_temperature) {
+    if (!s_effMgr) return;
+    if (!state) {
+        s_effMgr->powerOff();
+        return;
+    }
+    s_effMgr->powerOn();
+    s_effMgr->setBrightness(level);
+
+    if (s_ledMatrix) {
+        ZigbeeManager::handleZigbeeColorTemp(color_temperature, *s_effMgr, *s_ledMatrix);
+    }
+}
+
 ZigbeeManager::ZigbeeManager()
     : m_mode(RADIO_MODE_WIFI),
       m_activeRadio(RADIO_MODE_WIFI),
@@ -12,10 +60,30 @@ ZigbeeManager::ZigbeeManager()
       m_wifiStayActiveUntilMs(0),
       m_nightlyCheckDone(false),
       m_pairingActive(false),
-      m_pairingStartMs(0) {}
+      m_pairingStartMs(0),
+      m_connectedSuccessDone(false) {}
 
-void ZigbeeManager::begin(LedMatrix* matrix) {
+void ZigbeeManager::saveLog(const char* logMsg) {
+    if (!logMsg) return;
+    Preferences prefs;
+    prefs.begin("sys_log", false);
+    prefs.putString("last_zb_log", logMsg);
+    prefs.end();
+    Serial.printf("[ZigbeeLog] %s\n", logMsg);
+}
+
+String ZigbeeManager::getLog() {
+    Preferences prefs;
+    prefs.begin("sys_log", true);
+    String res = prefs.getString("last_zb_log", "Нет записей о сессиях Zigbee");
+    prefs.end();
+    return res;
+}
+
+void ZigbeeManager::begin(LedMatrix* matrix, EffectManager* eff) {
     m_matrix = matrix;
+    s_ledMatrix = matrix;
+    s_effMgr = eff;
 
     Preferences prefs;
     prefs.begin("radio", true);
@@ -26,163 +94,149 @@ void ZigbeeManager::begin(LedMatrix* matrix) {
         m_mode = RADIO_MODE_WIFI;
     }
 
-    // Always start with Wi-Fi active for initial 60 seconds (NTP GMT+2 sync, OTA check)
-    m_activeRadio = RADIO_MODE_WIFI;
-    m_lastHttpActivityMs = millis();
-    m_wifiStayActiveUntilMs = millis() + BOOT_WIFI_WINDOW_MS;
-    m_nightlyCheckDone = false;
-    m_pairingActive = false;
-    m_pairingStartMs = 0;
+    // Configure Zigbee endpoint attributes and callbacks
+    zbLight.setManufacturerAndModel("MagicLamp", "MagicLamp-C6");
+    uint16_t capabilities = ZIGBEE_COLOR_CAPABILITY_HUE_SATURATION | ZIGBEE_COLOR_CAPABILITY_X_Y | ZIGBEE_COLOR_CAPABILITY_COLOR_TEMP;
+    zbLight.setLightColorCapabilities(capabilities);
+    zbLight.onLightChangeRgb(onZigbeeLightChangeRgb);
+    zbLight.onLightChangeHsv(onZigbeeLightChangeHsv);
+    zbLight.onLightChangeTemp(onZigbeeLightChangeTemp);
 
-    Serial.printf("[ZigbeeManager] Initialized. Configured Mode: %s (%d), Active Radio: Wi-Fi (60s boot window)\n",
-                  getModeString(), m_mode);
-}
+    // Register Endpoint 10 in Zigbee Core
+    Zigbee.addEndpoint(&zbLight);
 
-void ZigbeeManager::startPairing(EffectManager* eff) {
-    m_pairingActive = true;
-    m_pairingStartMs = millis();
-    Serial.println(F("[ZigbeeManager] Pairing mode started (180s window). Breathing Alice purple belt active."));
-    if (eff) {
-        eff->setZigbeePairingMode(true);
+    if (m_mode == RADIO_MODE_ZIGBEE) {
+        m_activeRadio = RADIO_MODE_ZIGBEE;
+        Serial.println(F("[ZigbeeManager] Starting hardware Zigbee 3.0 stack (IEEE 802.15.4)..."));
+
+        if (!Zigbee.begin(ZIGBEE_END_DEVICE)) {
+            Serial.println(F("[ZigbeeManager] ERROR: Zigbee.begin() failed! Returning to Wi-Fi..."));
+            saveLog("Ошибка инициализации Zigbee.begin(ZIGBEE_END_DEVICE)");
+            switchToWifi("Ошибка старта Zigbee стека", eff);
+            return;
+        }
+
+        // Open network search (Network Steering) for 180 seconds
+        Zigbee.setRebootOpenNetwork(180);
+        m_pairingActive = true;
+        m_pairingStartMs = millis();
+        m_connectedSuccessDone = false;
+
+        saveLog("Zigbee 3.0 End Device активен (MagicLamp-C6, EP 10). Поиск сети (до 180 с)...");
+
+        if (eff) {
+            eff->setZigbeePairingMode(true);
+        }
+        Serial.println(F("[ZigbeeManager] Zigbee stack active. Steering open for 180s. Purple belt breathing."));
+    } else {
+        // Wi-Fi mode
+        m_activeRadio = RADIO_MODE_WIFI;
+        m_lastHttpActivityMs = millis();
+        m_wifiStayActiveUntilMs = millis() + BOOT_WIFI_WINDOW_MS;
+        m_nightlyCheckDone = false;
+        m_pairingActive = false;
+        m_connectedSuccessDone = false;
+        Serial.println(F("[ZigbeeManager] Configured for Wi-Fi mode. Zigbee hardware stack dormant."));
     }
 }
 
-void ZigbeeManager::stopPairing(EffectManager* eff) {
-    m_pairingActive = false;
-    m_pairingStartMs = 0;
-    if (eff) {
-        eff->setZigbeePairingMode(false);
+void ZigbeeManager::switchToZigbee(EffectManager* eff) {
+    Serial.println(F("[ZigbeeManager] Switching to Zigbee 3.0: saving NVS and restarting..."));
+    saveLog("Инициирован переход в Zigbee 3.0 (чистый рестарт)...");
+
+    Preferences prefs;
+    prefs.begin("radio", false);
+    prefs.putUChar("mode", RADIO_MODE_ZIGBEE);
+    prefs.end();
+
+    if (eff && m_matrix) {
+        eff->triggerRadioModeAnimation(true); // Purple-gold rings converging to equator (2s)
+        uint32_t t0 = millis();
+        while (millis() - t0 < 2000) {
+            eff->renderRadioModeAnimation(*m_matrix, millis() - t0);
+            m_matrix->show();
+            delay(16);
+        }
+    } else {
+        delay(500);
+    }
+
+    ESP.restart();
+}
+
+void ZigbeeManager::switchToWifi(const char* reason, EffectManager* eff) {
+    Serial.printf("[ZigbeeManager] Switching to Wi-Fi mode (%s): saving NVS and restarting...\n", reason);
+    String logMsg = String("Возврат в Wi-Fi: ") + reason;
+    saveLog(logMsg.c_str());
+
+    Preferences prefs;
+    prefs.begin("radio", false);
+    prefs.putUChar("mode", RADIO_MODE_WIFI);
+    prefs.end();
+
+    if (eff && m_matrix) {
+        eff->triggerRadioModeAnimation(false); // Rotating green beacon on top rings (2s)
+        uint32_t t0 = millis();
+        while (millis() - t0 < 2000) {
+            eff->renderRadioModeAnimation(*m_matrix, millis() - t0);
+            m_matrix->show();
+            delay(16);
+        }
+    } else {
+        delay(500);
+    }
+
+    ESP.restart();
+}
+
+uint8_t ZigbeeManager::toggleMode(EffectManager* eff) {
+    if (m_mode == RADIO_MODE_ZIGBEE) {
+        switchToWifi("Ручное переключение по 4 кликам", eff);
+        return RADIO_MODE_WIFI;
+    } else {
+        switchToZigbee(eff);
+        return RADIO_MODE_ZIGBEE;
     }
 }
 
 void ZigbeeManager::noteHttpActivity() {
     m_lastHttpActivityMs = millis();
-    // Extend Wi-Fi session by 10 minutes from now
     m_wifiStayActiveUntilMs = millis() + HTTP_WIFI_EXTENSION_MS;
 }
 
 void ZigbeeManager::requestWifiSession(uint32_t durationMs, WiFiManager* wifi, EffectManager* eff, bool playAnim) {
     m_wifiStayActiveUntilMs = millis() + durationMs;
     m_lastHttpActivityMs = millis();
-
-    if (m_activeRadio != RADIO_MODE_WIFI) {
-        Serial.printf("[ZigbeeManager] Transitioning radio from Zigbee to Wi-Fi for %u ms session...\n",
-                      (unsigned int)durationMs);
-        if (playAnim && eff) {
-            eff->triggerRadioModeAnimation(false);
-        }
-        if (wifi) {
-            wifi->begin();
-        }
-        m_activeRadio = RADIO_MODE_WIFI;
-    }
-}
-
-bool ZigbeeManager::setMode(uint8_t mode, bool playAnim, EffectManager* eff, WiFiManager* wifi) {
-    if (mode > 1) mode = RADIO_MODE_WIFI;
-
-    bool changed = (m_mode != mode);
-    m_mode = mode;
-
-    Preferences prefs;
-    prefs.begin("radio", false);
-    prefs.putUChar("mode", m_mode);
-    prefs.end();
-
-    Serial.printf("[ZigbeeManager] Radio configured mode set to %s (%d)\n",
-                  getModeString(), m_mode);
-
-    if (m_mode == RADIO_MODE_WIFI) {
-        stopPairing(eff);
-        requestWifiSession(HTTP_WIFI_EXTENSION_MS, wifi, eff, playAnim);
-    } else {
-        // Immediate switch to Zigbee if user explicitly selected Zigbee
-        if (m_activeRadio == RADIO_MODE_WIFI) {
-            if (playAnim && eff) {
-                eff->triggerRadioModeAnimation(true);
-            }
-            WiFi.disconnect(true);
-            WiFi.mode(WIFI_OFF);
-            m_activeRadio = RADIO_MODE_ZIGBEE;
-            Serial.println(F("[ZigbeeManager] Switched active radio to Zigbee (802.15.4)."));
-        }
-        startPairing(eff);
-    }
-
-    return changed;
-}
-
-uint8_t ZigbeeManager::toggleMode(EffectManager* eff, WiFiManager* wifi) {
-    uint8_t nextMode = (m_mode == RADIO_MODE_WIFI) ? RADIO_MODE_ZIGBEE : RADIO_MODE_WIFI;
-    setMode(nextMode, true, eff, wifi);
-    return m_mode;
 }
 
 void ZigbeeManager::update(WiFiManager* wifi, EffectManager* eff, LedMatrix* matrix, OtaGithub* ota) {
     uint32_t now = millis();
 
-    // 0. Zigbee Pairing 180s fail-safe timeout check
-    if (m_pairingActive) {
-        if (now - m_pairingStartMs >= ZIGBEE_PAIRING_TIMEOUT_MS) {
-            Serial.println(F("[ZigbeeManager] 180s pairing window elapsed without commission. Fail-safe: switching to Wi-Fi!"));
-            stopPairing(eff);
-            setMode(RADIO_MODE_WIFI, false, eff, wifi);
-            if (eff) {
-                eff->triggerRadioModeAnimation(false);
-            }
-            if (wifi) {
-                wifi->begin();
-            }
-        }
-    }
-
-    // 1. Automatic transition to Zigbee if configured mode is Zigbee
-    if (m_mode == RADIO_MODE_ZIGBEE && m_activeRadio == RADIO_MODE_WIFI) {
-        if (now >= m_wifiStayActiveUntilMs) {
-            Serial.println(F("[ZigbeeManager] 10 min inactivity / boot window ended: auto-switching to Zigbee mode."));
-            if (eff) {
-                eff->triggerRadioModeAnimation(true);
-            }
-            WiFi.disconnect(true);
-            WiFi.mode(WIFI_OFF);
-            m_activeRadio = RADIO_MODE_ZIGBEE;
-            startPairing(eff);
-        }
-    }
-
-    // 2. Daily 04:00 GMT+2 window: wake Wi-Fi for 45s for OTA check in Stealth Mode
     if (m_mode == RADIO_MODE_ZIGBEE) {
-        time_t rawtime;
-        time(&rawtime);
-        if (rawtime > 100000) {
-            time_t local = rawtime + TIMEZONE_OFFSET_SEC;
-            struct tm* ti = gmtime(&local);
-            if (ti) {
-                if (ti->tm_hour == 4 && ti->tm_min == 0) {
-                    if (!m_nightlyCheckDone) {
-                        m_nightlyCheckDone = true;
-                        Serial.println(F("[ZigbeeManager] 04:00 GMT+2 window: enabling Wi-Fi for 45s (Stealth Mode OTA check)..."));
-                        requestWifiSession(NIGHTLY_CHECK_WINDOW_MS, wifi, eff, false /* stealth - no animation */);
-                        if (ota) {
-                            ota->triggerCheck();
-                        }
-                    }
-                } else if (ti->tm_hour != 4 || ti->tm_min != 0) {
-                    m_nightlyCheckDone = false;
-                }
+        // 1. Check Zigbee connection status
+        bool connected = Zigbee.connected();
+        if (connected && !m_connectedSuccessDone) {
+            m_connectedSuccessDone = true;
+            m_pairingActive = false;
+            Serial.println(F("[ZigbeeManager] SUCCESS: Connected to Zigbee Coordinator (Alice / Yandex Station)!"));
+            saveLog("Подключено к координатору Zigbee (Яндекс Станция)! Сеть активна.");
+
+            if (eff) {
+                eff->setZigbeePairingMode(false);
+                eff->triggerSuccessWave(); // 1.5s emerald-green wave across whole cylinder
+            }
+        }
+
+        // 2. Check 180s fail-safe timeout
+        if (m_pairingActive && !connected) {
+            if (now - m_pairingStartMs >= ZIGBEE_PAIRING_TIMEOUT_MS) {
+                Serial.println(F("[ZigbeeManager] 180s pairing window elapsed without coordinator. Fail-safe: switching to Wi-Fi!"));
+                switchToWifi("Таймаут сопряжения 180 с без координатора", eff);
+                return;
             }
         }
     }
 }
-
-void ZigbeeManager::playSwitchAnimation(uint8_t mode) {
-    Serial.printf("[ZigbeeManager] Radio switch indication for %s.\n",
-                  (mode == RADIO_MODE_WIFI) ? "Wi-Fi (Green beacon)" : "Zigbee (Purple-gold rings)");
-}
-
-// =============================================================================
-// Zigbee / Alice Voice Commands Mapping
-// =============================================================================
 
 void ZigbeeManager::handleZigbeeOnOff(bool on, EffectManager& effectMgr) {
     Serial.printf("[ZigbeeCommand] Power: %s\n", on ? "ON" : "OFF");
@@ -201,13 +255,13 @@ void ZigbeeManager::handleZigbeeBrightness(uint8_t brightness, EffectManager& ef
 void ZigbeeManager::handleZigbeeColor(uint8_t hue, uint8_t saturation, EffectManager& effectMgr, LedMatrix& matrix) {
     Serial.printf("[ZigbeeCommand] Color Hue: %d, Sat: %d\n", hue, saturation);
 
-    // If saturation is low (< 35): user asked for white / warm white
+    // Low saturation: user requested warm white / nightlight
     if (saturation < 35) {
         effectMgr.setEffect(0, matrix); // Nightlight
         return;
     }
 
-    // Map 360-degree Alice color spectrum (0..255) to 15 built-in effects
+    // Map Alice color spectrum (0..255) to 15 built-in effects
     uint8_t targetEffect = 0;
     if (hue < 16) {
         targetEffect = 2;   // Red -> Fire
@@ -242,8 +296,6 @@ void ZigbeeManager::handleZigbeeColor(uint8_t hue, uint8_t saturation, EffectMan
 
 void ZigbeeManager::handleZigbeeColorTemp(uint16_t mireds, EffectManager& effectMgr, LedMatrix& matrix) {
     Serial.printf("[ZigbeeCommand] Color Temp: %u mireds\n", mireds);
-    // mireds: 153 (6500K) .. 555 (1800K)
-    // Nightlight temp: 0 = 1800K (555 mireds), 255 = 4000K (250 mireds)
     uint8_t temp = 90;
     if (mireds >= 555) {
         temp = 0;

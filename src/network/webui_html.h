@@ -766,7 +766,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
         <div class="telem-item">
           <div class="telem-label">Версия</div>
-          <div class="telem-val" id="telem-ver">v0.9.0</div>
+          <div class="telem-val" id="telem-ver">v0.9.6</div>
         </div>
       </div>
     </section>
@@ -777,7 +777,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       
       <div class="ota-row">
         <div>
-          <div class="ota-info">Текущая версия: <strong id="ota-cur-ver">v0.9.0</strong> | Последняя на GitHub: <strong id="ota-latest-ver">--</strong></div>
+          <div class="ota-info">Текущая версия: <strong id="ota-cur-ver">v0.9.6</strong> | Последняя на GitHub: <strong id="ota-latest-ver">--</strong></div>
           <div class="ota-info" style="margin-top:4px;">Статус проверки: <span id="ota-status" style="color:var(--primary);">Idle</span></div>
         </div>
         <button id="btn-ota-check" class="btn btn-secondary" onclick="triggerGithubOta()">
@@ -814,6 +814,27 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
       <button class="btn" onclick="saveWifiCredentials()">Сохранить и переподключить</button>
       <div id="wifi-msg" class="form-msg"></div>
+    </section>
+
+    <!-- FLIGHT RECORDER / SYSTEM LOG -->
+    <section class="card">
+      <details style="cursor:pointer;" open>
+        <summary class="card-title" style="margin-bottom:0; display:flex; justify-content:space-between; align-items:center;">
+          <span>&#128220; Системный журнал (Бортовой самописец)</span>
+          <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">Статус сессий</span>
+        </summary>
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--card-border);">
+          <div style="font-size:0.82rem; margin-bottom:8px;">
+            <span style="color:var(--text-muted);">Последний статус Zigbee-сессии:</span>
+            <div id="zb-session-log" style="font-family:monospace; font-size:0.8rem; background:rgba(0,0,0,0.35); padding:8px 10px; border-radius:6px; border:1px solid var(--card-border); margin-top:4px; color:var(--purple); word-break:break-word;">
+              Загрузка...
+            </div>
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-muted);">
+            Данные фиксируются в энергонезависимой памяти NVS при переходах между радиостеками Wi-Fi и Zigbee 3.0 (IEEE 802.15.4).
+          </div>
+        </div>
+      </details>
     </section>
 
     <footer>
@@ -1312,12 +1333,18 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('telem-ip').innerText = data.ip || '--';
         document.getElementById('telem-uptime').innerText = formatUptime(data.uptime || 0);
         document.getElementById('telem-heap').innerText = data.freeHeap || '--';
-        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.9.0');
+        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.9.6');
 
         // OTA info
-        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.9.0');
+        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.9.6');
         document.getElementById('ota-latest-ver').innerText = data.latestVersion ? ('v' + data.latestVersion) : 'не проверялась';
         document.getElementById('ota-status').innerText = data.otaStatus || 'Idle';
+
+        // Flight recorder / Zigbee session log
+        if (data.last_zb_log !== undefined) {
+          const zbLogEl = document.getElementById('zb-session-log');
+          if (zbLogEl) zbLogEl.innerText = data.last_zb_log;
+        }
 
         // WiFi current SSID
         document.getElementById('wifi-cur-ssid').innerText = data.ssid || (data.isAp ? 'MagicLamp-Setup' : 'Не подключено');

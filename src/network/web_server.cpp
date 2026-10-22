@@ -350,6 +350,7 @@ void LampWebServer::handleStatus() {
                      ",\"latestVersion\":\"" + String(latestVer) + "\"" +
                      ",\"otaProgress\":" + String(otaProg) +
                      ",\"isUpdating\":" + String(isUpdating ? "true" : "false") +
+                     ",\"last_zb_log\":\"" + ZigbeeManager::getLog() + "\"" +
                      ",\"totalEffects\":" + String(totalEff) +
                      ",\"effects\":" + effectsArray + "}";
 
@@ -706,14 +707,17 @@ void LampWebServer::handleRadioSwitch() {
         targetMode = (m_zigbee->getMode() == RADIO_MODE_WIFI) ? RADIO_MODE_ZIGBEE : RADIO_MODE_WIFI;
     }
 
-    m_zigbee->setMode(targetMode, false, m_effectMgr, m_wifi);
-
-    if (m_effectMgr) {
-        m_effectMgr->triggerRadioModeAnimation(targetMode == RADIO_MODE_ZIGBEE);
+    if (targetMode == RADIO_MODE_ZIGBEE) {
+        String res = "{\"status\":\"ok\",\"radio_mode\":\"zigbee\",\"rebooting\":true}";
+        m_server.send(200, "application/json", res);
+        delay(100);
+        m_zigbee->switchToZigbee(m_effectMgr);
+    } else {
+        String res = "{\"status\":\"ok\",\"radio_mode\":\"wifi\",\"rebooting\":true}";
+        m_server.send(200, "application/json", res);
+        delay(100);
+        m_zigbee->switchToWifi("Запрос из WebUI", m_effectMgr);
     }
-
-    String res = "{\"status\":\"ok\",\"radio_mode\":\"" + String(m_zigbee->getModeString()) + "\"}";
-    m_server.send(200, "application/json", res);
 }
 
 void LampWebServer::handleOtaCheck() {

@@ -63,17 +63,22 @@ void setup() {
     effectManager.begin(ledMatrix);
     Serial.println(F("[EffectManager] Engine ready with 15 built-in effects and NVS debounce."));
 
-    // 5. Initialize Wi-Fi Manager (STA or SoftAP + Captive Portal + mDNS + ArduinoOTA)
-    wifiManager.begin();
+    // 5. Initialize Zigbee / Radio mode manager (reads mode from NVS)
+    zigbeeManager.begin(&ledMatrix, &effectManager);
 
-    // 6. Initialize GitHub OTA Updater
-    otaGithub.init(&ledMatrix, &effectManager);
+    if (zigbeeManager.isZigbee()) {
+        Serial.println(F("[Main] Clean Boot into ZIGBEE 3.0 Mode. Wi-Fi and WebServer disabled. 100% RAM & Radio dedicated to 802.15.4."));
+    } else {
+        Serial.println(F("[Main] Booted in Wi-Fi Mode. Initializing network stack..."));
+        // 6. Initialize Wi-Fi Manager (STA or SoftAP + Captive Portal + mDNS + ArduinoOTA)
+        wifiManager.begin();
 
-    // 7. Initialize Zigbee / Radio mode manager
-    zigbeeManager.begin(&ledMatrix);
+        // 7. Initialize GitHub OTA Updater
+        otaGithub.init(&ledMatrix, &effectManager);
 
-    // 8. Initialize WebServer & WebUI
-    webServer.begin(&effectManager, &ledMatrix, &mic, &wifiManager, &otaGithub, &zigbeeManager);
+        // 8. Initialize WebServer & WebUI
+        webServer.begin(&effectManager, &ledMatrix, &mic, &wifiManager, &otaGithub, &zigbeeManager);
+    }
 
     Serial.println(F("Initialization complete. Entering main loop..."));
 }
@@ -100,34 +105,25 @@ void loop() {
                 break;
 
             case BUTTON_EVENT_TRIPLE_CLICK:
-                // Triple click: Trigger GitHub Silent OTA release check
-                Serial.println(F("[Control] Triple click: Checking for GitHub OTA updates..."));
-                otaGithub.triggerCheck();
-                break;
-
-            case BUTTON_EVENT_FOUR_CLICKS:
-                // 4 clicks: Toggle radio mode Wi-Fi <-> Zigbee
-                Serial.println(F("[Control] 4 clicks: Toggling Radio Mode (Wi-Fi <-> Zigbee)..."));
-                if (zigbeeManager.isZigbee() || zigbeeManager.getActiveRadio() == RADIO_MODE_ZIGBEE) {
-                    // Switch from Zigbee to Wi-Fi
-                    zigbeeManager.stopPairing(&effectManager);
-                    zigbeeManager.setMode(RADIO_MODE_WIFI, false, &effectManager, &wifiManager);
-                    effectManager.triggerRadioModeAnimation(false);
-                    wifiManager.begin();
-                    Serial.println(F("[Control] Switched to Wi-Fi mode."));
-                } else {
-                    // Switch from Wi-Fi to Zigbee with 180s pairing
-                    zigbeeManager.setMode(RADIO_MODE_ZIGBEE, false, &effectManager, &wifiManager);
-                    effectManager.triggerRadioModeAnimation(true);
-                    zigbeeManager.startPairing(&effectManager);
-                    Serial.println(F("[Control] Switched to Zigbee mode. Pairing started (180s)..."));
+                // Triple click: Trigger GitHub Silent OTA release check (Wi-Fi only)
+                if (zigbeeManager.isWifi()) {
+                    Serial.println(F("[Control] Triple click: Checking for GitHub OTA updates..."));
+                    otaGithub.triggerCheck();
                 }
                 break;
 
+            case BUTTON_EVENT_FOUR_CLICKS:
+                // 4 clicks: Clean Boot-Switch between Wi-Fi and Zigbee
+                Serial.println(F("[Control] 4 clicks: Clean Radio Boot-Switch (Wi-Fi <-> Zigbee)..."));
+                zigbeeManager.toggleMode(&effectManager);
+                break;
+
             case BUTTON_EVENT_SEVEN_CLICKS:
-                // 7 clicks: Wi-Fi reset & restore network defaults
-                Serial.println(F("[Control] 7 clicks: Wi-Fi credentials reset requested."));
-                wifiManager.resetSettings();
+                // 7 clicks: Wi-Fi reset & restore network defaults (Wi-Fi only)
+                if (zigbeeManager.isWifi()) {
+                    Serial.println(F("[Control] 7 clicks: Wi-Fi credentials reset requested."));
+                    wifiManager.resetSettings();
+                }
                 break;
 
             case BUTTON_EVENT_LONG_PRESS_HOLD:
@@ -147,18 +143,18 @@ void loop() {
     // 2. Poll microphone audio processing (non-blocking DMA read, ~10-30 us)
     mic.update();
 
-    // 3. Update Wi-Fi manager state machine and network services
-    wifiManager.update();
+    // 3. Update Wi-Fi stack and network services (strictly in Wi-Fi mode)
+    if (zigbeeManager.isWifi()) {
+        wifiManager.update();
+        webServer.update();
+        otaGithub.update(&ledMatrix);
+    }
 
-    // 4. Update WebServer client requests
-    webServer.update();
-
-    // 5. Update Zigbee / Radio mode manager
+    // 4. Update Zigbee / Radio mode manager
     zigbeeManager.update(&wifiManager, &effectManager, &ledMatrix, &otaGithub);
 
-    // 6. Update active effect animation or OTA progress (~60 FPS)
+    // 5. Update active effect animation or OTA progress (~60 FPS)
     effectManager.update(ledMatrix, mic);
-    otaGithub.update(&ledMatrix);
 
     // 7. Telemetry: Print CPU temperature, network, and Effect metrics every TEMP_PRINT_INTERVAL_MS
     if (currentMillis - lastTempPrintTime >= TEMP_PRINT_INTERVAL_MS) {

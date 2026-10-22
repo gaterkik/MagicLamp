@@ -109,32 +109,48 @@
   - `Fireflies`: темп перемещения светлячков.
   - `Aurora`, `MatrixRain`, `LavaLamp`, `Vortex`, `CyberPulse`: множитель времени анимации.
 
-## 6. Модуль радио Zigbee и авто-переключение (`src/network/zigbee_manager.*`, `EffectManager`)
-- Поддержка переключения радиомодуля ESP32-C6 между `Wi-Fi` и `Zigbee` (для экосистемы Яндекс Станция Миди / Алиса).
-- Хранение текущего режима в NVS `Preferences` (`radio_mode`: 0 = Wi-Fi, 1 = Zigbee).
-- **Потокобезопасная анимация переключения радио в `EffectManager`:**
-  * Вызов `BUTTON_EVENT_FOUR_CLICKS` в `main.cpp` и эндпоинт `POST /api/radio/switch` в `web_server.cpp` вызывают `effectManager.triggerRadioModeAnimation(isZigbee)`.
-  * Длительность анимации: ровно 2 секунды, отрисовывается неблокирующим образом в основном цикле `EffectManager::update()` поверх всех эффектов:
-    - При переключении в Zigbee: схождение двух пурпурно-золотых колец сверху (`Y=15`) и снизу (`Y=0`) к экватору (`Y=7..8`).
-    - При переключении в Wi-Fi: вращающийся ярко-зеленый луч-маяк на верхних кольцах (`Y=14..15`).
-- **Стек Zigbee End Device для ESP32-C6 (`ZigbeeColorDimmableLight` / `esp-zigbee-sdk` 802.15.4):**
-  * Кластеры: `On/Off 0x0006`, `Level Control 0x0008`, `Color Control 0x0300`, идентификатор модели `"MagicLamp-C6"`.
-  * Управление питанием (вкл/выкл) и плавная регулировка яркости от Яндекс Станции.
-  * Переключение 15 встроенных эффектов через установку цвета (Hue / Saturation) от Алисы.
-  * Безопасное 3-минутное (180 секунд) окно сопряжения (Commissioning mode):
-    - Пока лампа не привязана к координатору Zigbee, на темном фоне в центре (`Y=7..8`) плавно «дышит» фиолетовый поясок Алисы.
-    - Автоматическая защита от потери связи (Fail-safe): если за 180 секунд сопряжение не завершилось ИЛИ если пользователь повторно нажал 4 клика — лампа проигрывает 2-секундный зеленый маяк и немедленно возвращается в Wi-Fi.
-- **Автоматика радио-цикла:**
-  * При подаче питания: старт в режиме Wi-Fi на 60 секунд (синхронизация NTP GMT+2, фоновая проверка OTA).
-  * Таймер активности `m_lastHttpActivityMs`: любое HTTP-обращение к `WebServer` (открытая вкладка WebUI) продлевает сеанс Wi-Fi на 10 минут.
-  * Авто-переход в Zigbee: если активирован режим Zigbee и в течение 10 минут нет запросов к WebServer — лампа автоматически переключает радио в режим Zigbee.
-  * Ночное окно синхронизации: раз в сутки в 04:00 GMT+2 автоматическое включение Wi-Fi на 45 секунд для проверки обновлений (в Stealth Mode при выключенной лампе) с возвратом в Zigbee.
-  * Пробуждение по кнопке: 4 клика (`BUTTON_EVENT_FOUR_CLICKS`) принудительно переключают между Wi-Fi и Zigbee.
+## 6. Реальный аппаратный стек Zigbee 3.0 и чистый Boot-Switch (`src/network/zigbee_manager.*`, `EffectManager`)
+- **Аппаратный стек IEEE 802.15.4 (`#include <Zigbee.h>` / `ZigbeeColorDimmableLight`):**
+  * Реализация устройства на Endpoint 10: `ZigbeeColorDimmableLight zbLight = ZigbeeColorDimmableLight(10);`
+  * Идентификация производителя и модели: `zbLight.setManufacturerAndModel("MagicLamp", "MagicLamp-C6")`.
+  * Регистрация конечной точки и запуск стека:
+    - `Zigbee.addEndpoint(&zbLight);`
+    - `Zigbee.begin(ZIGBEE_END_DEVICE);`
+    - Если запрашивалось новое сопряжение (`force_pairing` в NVS): вызов `esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING)` с открытием поиска на 180 секунд (`Zigbee.setRebootOpenNetwork(180)`).
+- **Интеграция коллбэков с `EffectManager`:**
+  * Коллбэк изменения состояния `zbLight.onLightChangeRgb(...)` / `onLightChangeHsv(...)`:
+    - `state` (On/Off) -> `effectMgr.powerOn()` / `effectMgr.powerOff()`.
+    - `level` (0..255) -> `effectMgr.setBrightness(level)`.
+    - цвет (`red, green, blue` / `hue, saturation`) -> вычисление Hue и переключение на соответствующий из 15 встроенных эффектов (если Saturation < 30 — включать «Ночник» с температурой света `colorTemp`).
+- **Чистый Boot-Switch через NVS и быструю перезагрузку (`ESP.restart()`):**
+  * Из-за совместного использования радиотракта 2.4 ГГц и ограниченного объема памяти одновременная работа Wi-Fi и стека Zigbee 802.15.4 исключена.
+  * Режим сохраняется в NVS `Preferences "radio"` (`mode`: 0 = Wi-Fi, 1 = Zigbee).
+  * При переключении в Zigbee лампа проигрывает 2-секундную анимацию схождения пурпурно-золотых колец к экватору, сохраняет `mode = 1` и вызывает `ESP.restart()`.
+  * При старте в режиме Zigbee Wi-Fi и WebServer не инициализируются, 100% RAM и радио отданы стеку Zigbee.
+  * Индикация поиска сети: на темном фоне в центре (`Y=7..8`) «дышит» фиолетовый поясок Алисы.
+  * Индикация успешного сопряжения: как только `Zigbee.connected() == true`, лампа проигрывает 1.5-секундную изумрудно-зеленую волну успеха и переходит к рабочему эффекту.
+  * При возврате в Wi-Fi (по 4 кликам кнопки или по таймауту 180 с без сопряжения) в NVS сохраняется лог сессии `last_zb_log`, проигрывается зеленый маяк сверху и выполняется `ESP.restart()` в чистый режим Wi-Fi.
+- **Диагностический лог сессии Zigbee в NVS (`Preferences "sys_log"`):**
+  * Запись точного статуса: код инициализации стека `esp_err_t`, статус `connected`, PAN ID / короткий адрес, причина завершения (`Timeout 180s without coordinator`, `Manual 4-click switch to Wi-Fi`, `Connected to PAN 0x....`).
+  * Передача последнего статуса через `GET /api/status` в JSON поле `last_zb_log` и отображение в «Бортовом журнале» WebUI.
 
-## 7. Структура папок проекта
-- `platformio.ini`, `partitions.csv`, `.gitignore`
-- `include/config.h`, `include/version.h`, `include/secrets.h`, `include/secrets.example.h`
-- `src/main.cpp`
-- `src/hal/` — `led_matrix`, `button`, `mic_i2s`
-- `src/effects/` — `effect_manager`, `core_effects`, `math_effects`, `audio_effect`, `extra_effects`
-- `src/network/` — `wifi_manager`, `ota_github`, `web_server`, `webui_html.h`, `zigbee_manager`
+## 7. Конфигурация сборки и оптимизация размера (`platformio.ini`)
+- **Размещение в OTA-разделе `0x1C0000` (1 835 008 байт):**
+  * Для гарантированного размещения бинарника со стеками Wi-Fi/HTTPS и реального Zigbee (`libzboss` + `libesp_zigbee`) в `platformio.ini` установлены флаги оптимизации:
+    ```ini
+    build_flags =
+        -DFL_NO_EXCEPT=
+        -DZIGBEE_MODE_ED=1
+        -Os
+        -DCORE_DEBUG_LEVEL=0
+        -ffunction-sections
+        -fdata-sections
+        -Wl,--gc-sections
+    ```
+- **Структура проекта:**
+  - `platformio.ini`, `partitions.csv`, `.gitignore`
+  - `include/config.h`, `include/version.h`, `include/secrets.h`, `include/secrets.example.h`
+  - `src/main.cpp`
+  - `src/hal/` — `led_matrix`, `button`, `mic_i2s`
+  - `src/effects/` — `effect_manager`, `core_effects`, `math_effects`, `audio_effect`, `extra_effects`
+  - `src/network/` — `wifi_manager`, `ota_github`, `web_server`, `webui_html.h`, `zigbee_manager`
