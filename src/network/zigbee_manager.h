@@ -14,11 +14,23 @@ enum RadioMode : uint8_t {
     RADIO_MODE_ZIGBEE = 1
 };
 
-#define ZIGBEE_LIGHT_ENDPOINT 10
+#define ZIGBEE_LIGHT_ENDPOINT 1
+
+/**
+ * @class MagicZigbeeLight
+ * @brief Custom Zigbee Color Dimmable Light with configurable device ID (0x010D/0x0102/0x0101)
+ *        and Alice / Yandex Station Basic Cluster attributes and Mains power source.
+ */
+class MagicZigbeeLight : public ZigbeeColorDimmableLight {
+public:
+    MagicZigbeeLight(uint8_t endpoint = ZIGBEE_LIGHT_ENDPOINT);
+    void setAppDeviceId(uint16_t deviceId);
+    void setupBasicClusterAttributes();
+};
 
 /**
  * @file zigbee_manager.h
- * @brief Real IEEE 802.15.4 Zigbee 3.0 hardware stack (ZigbeeColorDimmableLight)
+ * @brief Real IEEE 802.15.4 Zigbee 3.0 hardware stack (MagicZigbeeLight)
  *        with clean Boot-Switch via NVS & ESP.restart().
  */
 class ZigbeeManager {
@@ -47,9 +59,12 @@ public:
         return (m_mode == RADIO_MODE_ZIGBEE) ? "zigbee" : "wifi";
     }
 
+    uint8_t getProfile() const { return m_zbProfile; }
+    void setProfile(uint8_t prof);
+
     /**
      * @brief Clean switch to Zigbee mode: plays purple-gold rings animation,
-     * saves mode=1 to NVS, and executes ESP.restart().
+     * saves mode=1, force_pair=true to NVS, and executes ESP.restart().
      */
     void switchToZigbee(EffectManager* eff);
 
@@ -80,6 +95,7 @@ public:
 private:
     uint8_t m_mode;
     uint8_t m_activeRadio;
+    uint8_t m_zbProfile;
     LedMatrix* m_matrix;
 
     uint32_t m_lastHttpActivityMs;

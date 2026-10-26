@@ -110,29 +110,41 @@
   - `Aurora`, `MatrixRain`, `LavaLamp`, `Vortex`, `CyberPulse`: множитель времени анимации.
 
 ## 6. Реальный аппаратный стек Zigbee 3.0 и чистый Boot-Switch (`src/network/zigbee_manager.*`, `EffectManager`)
-- **Аппаратный стек IEEE 802.15.4 (`#include <Zigbee.h>` / `ZigbeeColorDimmableLight`):**
-  * Реализация устройства на Endpoint 10: `ZigbeeColorDimmableLight zbLight = ZigbeeColorDimmableLight(10);`
-  * Идентификация производителя и модели: `zbLight.setManufacturerAndModel("MagicLamp", "MagicLamp-C6")`.
+- **Аппаратный стек IEEE 802.15.4 (`#include <Zigbee.h>` / `MagicZigbeeLight`):**
+  * В `zigbee_manager.h` установлен стандартный **`Endpoint 1`**: `#define ZIGBEE_LIGHT_ENDPOINT 1`.
+  * Реализован специализированный класс `class MagicZigbeeLight : public ZigbeeColorDimmableLight`, получающий прямой доступ к `protected` полю `_ep_config` из `ZigbeeEP`:
+    - Установка корректного `_ep_config.app_device_id = 0x010D` (`Extended Color Light` для профилей 1 и 2), `0x0102` (`Color Dimmable Light` для профиля 3), `0x0101` (`Dimmable Light` для профиля 4).
+    - Явное добавление атрибутов ZCL Basic Cluster для гарантированного прохождения интервью Яндекс Станции: `ESP_ZB_ZCL_ATTR_BASIC_ZCL_VERSION_ID (8)`, `ESP_ZB_ZCL_ATTR_BASIC_APPLICATION_VERSION_ID (1)`, `ESP_ZB_ZCL_ATTR_BASIC_STACK_VERSION_ID (2)`, `ESP_ZB_ZCL_ATTR_BASIC_HW_VERSION_ID (1)`.
+    - Обязательный вызов `setPowerSource(ZB_POWER_SOURCE_MAINS)` для корректной классификации питания в Яндекс Умном Доме.
+  * **Профили совместимости Zigbee (Алиса):**
+    - Профиль 1 (Tuya / Яндекс RGB+CCT — по умолчанию): `app_device_id = 0x010D`, `Manufacturer = "_TZ3210_jd3z4yig"`, `Model = "TS0505B"`, возможности `HUE_SAT | X_Y | COLOR_TEMP (0x0019)`.
+    - Профиль 2 (Zigbee 3.0 Extended Color `0x010D`): `app_device_id = 0x010D`, `Manufacturer = "Yandex"`, `Model = "YNDX-00531"`, возможности `0x0019`.
+    - Профиль 3 (Чистый RGB `0x0102` без температуры): `app_device_id = 0x0102`, `Manufacturer = "SIGNIFY"`, `Model = "LCT015"`, возможности `0x0009`.
+    - Профиль 4 (Базовый Диммер `0x0101`): `app_device_id = 0x0101`, `Manufacturer = "IKEA of Sweden"`, `Model = "TRADFRI bulb E27 W opal 1000lm"`.
   * Регистрация конечной точки и запуск стека:
     - `Zigbee.addEndpoint(&zbLight);`
+    - Если запрашивалось новое сопряжение (`force_pairing == true` в NVS `Preferences "radio"`): вызывается `esp_zb_nvram_erase_at_start(true)` перед `Zigbee.begin()`, чтобы полностью очистить `zb_storage` и предотвратить старые ошибки связывания.
     - `Zigbee.begin(ZIGBEE_END_DEVICE);`
-    - Если запрашивалось новое сопряжение (`force_pairing` в NVS): вызов `esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING)` с открытием поиска на 180 секунд (`Zigbee.setRebootOpenNetwork(180)`).
-- **Интеграция коллбэков с `EffectManager`:**
-  * Коллбэк изменения состояния `zbLight.onLightChangeRgb(...)` / `onLightChangeHsv(...)`:
+    - Вызов `esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING)` с открытием поиска на 180 секунд (`Zigbee.setRebootOpenNetwork(180)`).
+    - Флаг `force_pairing` сбрасывается в `false` в NVS только после подтверждения `Zigbee.connected() == true`.
+- **Интеграция коллбэков с `EffectManager` и логирование команд Алисы:**
+  * Коллбэк изменения состояния `zbLight.onLightChangeRgb(...)` / `onLightChangeHsv(...)` / `onLightChangeTemp(...)`:
     - `state` (On/Off) -> `effectMgr.powerOn()` / `effectMgr.powerOff()`.
     - `level` (0..255) -> `effectMgr.setBrightness(level)`.
-    - цвет (`red, green, blue` / `hue, saturation`) -> вычисление Hue и переключение на соответствующий из 15 встроенных эффектов (если Saturation < 30 — включать «Ночник» с температурой света `colorTemp`).
+    - цвет (`red, green, blue` / `hue, saturation`) -> вычисление Hue и переключение на соответствующий из 15 встроенных эффектов (если Saturation < 35 — включать «Ночник» с температурой света `colorTemp`).
+    - Все входящие команды от Яндекс Станции (On/Off, яркость, цвет, температура) форматируются и записываются в `last_zb_log` в NVS для отображения в WebUI.
 - **Чистый Boot-Switch через NVS и быструю перезагрузку (`ESP.restart()`):**
   * Из-за совместного использования радиотракта 2.4 ГГц и ограниченного объема памяти одновременная работа Wi-Fi и стека Zigbee 802.15.4 исключена.
-  * Режим сохраняется в NVS `Preferences "radio"` (`mode`: 0 = Wi-Fi, 1 = Zigbee).
-  * При переключении в Zigbee лампа проигрывает 2-секундную анимацию схождения пурпурно-золотых колец к экватору, сохраняет `mode = 1` и вызывает `ESP.restart()`.
+  * Режим сохраняется в NVS `Preferences "radio"` (`mode`: 0 = Wi-Fi, 1 = Zigbee; `profile`: 0..3; `force_pairing`: bool).
+  * При переключении в Zigbee лампа проигрывает 2-секундную анимацию схождения пурпурно-золотых колец к экватору, сохраняет `mode = 1`, `force_pairing = true` и вызывает `ESP.restart()`.
   * При старте в режиме Zigbee Wi-Fi и WebServer не инициализируются, 100% RAM и радио отданы стеку Zigbee.
   * Индикация поиска сети: на темном фоне в центре (`Y=7..8`) «дышит» фиолетовый поясок Алисы.
-  * Индикация успешного сопряжения: как только `Zigbee.connected() == true`, лампа проигрывает 1.5-секундную изумрудно-зеленую волну успеха и переходит к рабочему эффекту.
+  * Индикация успешного сопряжения: как только `Zigbee.connected() == true`, лампа сбрасывает `force_pairing = false`, проигрывает 1.5-секундную изумрудно-зеленую волну успеха и переходит к рабочему эффекту.
   * При возврате в Wi-Fi (по 4 кликам кнопки или по таймауту 180 с без сопряжения) в NVS сохраняется лог сессии `last_zb_log`, проигрывается зеленый маяк сверху и выполняется `ESP.restart()` в чистый режим Wi-Fi.
 - **Диагностический лог сессии Zigbee в NVS (`Preferences "sys_log"`):**
-  * Запись точного статуса: код инициализации стека `esp_err_t`, статус `connected`, PAN ID / короткий адрес, причина завершения (`Timeout 180s without coordinator`, `Manual 4-click switch to Wi-Fi`, `Connected to PAN 0x....`).
+  * Запись статуса: активный профиль, код инициализации стека `esp_err_t`, статус `connected`, PAN ID / короткий адрес, последние ZCL-команды Алисы, причина завершения (`Timeout 180s without coordinator`, `Manual 4-click switch to Wi-Fi`, `Connected to PAN 0x....`).
   * Передача последнего статуса через `GET /api/status` в JSON поле `last_zb_log` и отображение в «Бортовом журнале» WebUI.
+- **Ограничения Flash-памяти:** размер свободного пространства в OTA-разделе составляет около 80 КБ. Любые изменения пишутся максимально компактно без дублирования строковых литералов.
 
 ## 7. Конфигурация сборки и оптимизация размера (`platformio.ini`)
 - **Размещение в OTA-разделе `0x1C0000` (1 835 008 байт):**

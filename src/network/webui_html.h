@@ -657,6 +657,16 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <span id="radio-btn-text">Переключить на Zigbee</span>
         </button>
       </div>
+
+      <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--card-border);">
+        <div style="font-weight:600; font-size:0.9rem; margin-bottom:6px;">Профиль совместимости Zigbee (Алиса):</div>
+        <select id="sel-zb-profile" class="sched-select" onchange="onZbProfileChange(this.value)">
+          <option value="0">Профиль 1: Tuya / Яндекс RGB+CCT (0x010D, TS0505B) [По умолчанию]</option>
+          <option value="1">Профиль 2: Яндекс Станция Extended (0x010D, YNDX-00531)</option>
+          <option value="2">Профиль 3: Philips Hue RGB (0x0102, LCT015)</option>
+          <option value="3">Профиль 4: IKEA Диммер (0x0101, TRADFRI)</option>
+        </select>
+      </div>
     </section>
 
     <!-- GLOBAL INDEPENDENT SCHEDULE: DAWN & DUSK -->
@@ -766,7 +776,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
         <div class="telem-item">
           <div class="telem-label">Версия</div>
-          <div class="telem-val" id="telem-ver">v0.9.6</div>
+          <div class="telem-val" id="telem-ver">v0.9.7</div>
         </div>
       </div>
     </section>
@@ -777,7 +787,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       
       <div class="ota-row">
         <div>
-          <div class="ota-info">Текущая версия: <strong id="ota-cur-ver">v0.9.6</strong> | Последняя на GitHub: <strong id="ota-latest-ver">--</strong></div>
+          <div class="ota-info">Текущая версия: <strong id="ota-cur-ver">v0.9.7</strong> | Последняя на GitHub: <strong id="ota-latest-ver">--</strong></div>
           <div class="ota-info" style="margin-top:4px;">Статус проверки: <span id="ota-status" style="color:var(--primary);">Idle</span></div>
         </div>
         <button id="btn-ota-check" class="btn btn-secondary" onclick="triggerGithubOta()">
@@ -1136,6 +1146,18 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
+    async function onZbProfileChange(val) {
+      try {
+        await fetch('/api/radio/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile: parseInt(val, 10) })
+        });
+      } catch (err) {
+        console.error('Zb profile error:', err);
+      }
+    }
+
     function updateRadioModeUI(mode) {
       currentRadioMode = mode;
       const isZig = (mode === 'zigbee');
@@ -1210,9 +1232,16 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           document.getElementById('power-text').innerText = 'ВЫКЛ';
         }
 
-        // Radio mode
+        // Radio mode & profile
         if (data.radio_mode && data.radio_mode !== currentRadioMode) {
           updateRadioModeUI(data.radio_mode);
+        }
+
+        if (data.zb_profile !== undefined) {
+          const selZb = document.getElementById('sel-zb-profile');
+          if (selZb && document.activeElement !== selZb) {
+            selZb.value = String(data.zb_profile);
+          }
         }
 
         // Active effect sync
@@ -1333,10 +1362,10 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('telem-ip').innerText = data.ip || '--';
         document.getElementById('telem-uptime').innerText = formatUptime(data.uptime || 0);
         document.getElementById('telem-heap').innerText = data.freeHeap || '--';
-        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.9.6');
+        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.9.7');
 
         // OTA info
-        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.9.6');
+        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.9.7');
         document.getElementById('ota-latest-ver').innerText = data.latestVersion ? ('v' + data.latestVersion) : 'не проверялась';
         document.getElementById('ota-status').innerText = data.otaStatus || 'Idle';
 

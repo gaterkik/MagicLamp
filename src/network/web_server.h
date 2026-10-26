@@ -69,6 +69,7 @@ private:
     void handleSchedule();
     void handleSleepNow();
     void handleRadioSwitch();
+    void handleRadioProfile();
     void handleOtaCheck();
     void handleWifi();
     void handleNotFound();

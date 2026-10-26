@@ -17,7 +17,7 @@
 - **Фаза 2 (Task 2.1 – 2.4):** Движок 9 базовых эффектов и NVS — `DONE`
 - **Фаза 3 (Task 3.1 – 3.4):** Калибровка железа, 10-й эффект, Wi-Fi, WebUI, Silent OTA — `DONE`
 - **Фаза 4 (Task 4.1 – 4.7):** Магазин эффектов, EffectVM, v0.6.0 Профили эффектов в NVS, NTP Будильник Рассвет/Отбой, Аудио и Скорость — `DONE`
-- **Фаза 5 (Task 5.1 – 5.8):** Apple UX, 15 встроенных эффектов, релизы v0.8.0 – v0.9.6 — `DONE`
+- **Фаза 5 (Task 5.1 – 5.9):** Apple UX, 15 встроенных эффектов, релизы v0.8.0 – v0.9.7 — `DONE`
 
 ---
 
@@ -515,3 +515,25 @@
   2. В `zigbee_manager.cpp` подключен `<Zigbee.h>` (или `<esp_zigbee_core.h>`) и вызываются реальные методы инициализации радиостека 802.15.4 и `ZigbeeColorDimmableLight` (заглушки удалены).
   3. Сборка `pio run` завершается со статусом `SUCCESS`, а размер `.pio/build/esp32-c6/firmware.bin` строго меньше `1835008` байт (`0x1C0000`).
 - **QA_Notes:** Проверено QA: замечаний нет. Сборка SUCCESS, размер firmware.bin 1830224 байт (< 1835008 байт), FIRMWARE_VERSION 0.9.6, реальный аппаратный стек <Zigbee.h> интегрирован.
+
+---
+
+### [Task 5.9] Релиз v0.9.7: Адаптация Zigbee-интервью под Яндекс Станцию Миди (Endpoint 1, Extended Color Light 0x010D, PowerSource Mains, сброс zb_storage и выбор профиля совместимости в WebUI)
+- **Status:** `DONE`
+- **Files:** `include/version.h`, `src/network/zigbee_manager.h`, `src/network/zigbee_manager.cpp`, `src/network/web_server.h`, `src/network/web_server.cpp`, `src/network/webui_html.h`, `src/main.cpp`
+- **Description:**
+  1. Поднять `FIRMWARE_VERSION` в `include/version.h` до `"0.9.7"`.
+  2. Перевести эндпоинт на `Endpoint 1` (`#define ZIGBEE_LIGHT_ENDPOINT 1`), реализовать `class MagicZigbeeLight : public ZigbeeColorDimmableLight` для установки `_ep_config.app_device_id = 0x010D` (Extended Color Light) и обязательных атрибутов Basic Cluster (`ESP_ZB_ZCL_ATTR_BASIC_ZCL_VERSION_ID` = 8, `ESP_ZB_ZCL_ATTR_BASIC_APPLICATION_VERSION_ID` = 1, `ESP_ZB_ZCL_ATTR_BASIC_STACK_VERSION_ID` = 2, `ESP_ZB_ZCL_ATTR_BASIC_HW_VERSION_ID` = 1) + `setPowerSource(ZB_POWER_SOURCE_MAINS)`.
+  3. Добавить вызов `esp_zb_nvram_erase_at_start(true)` при старте нового сопряжения (`force_pairing`), сбрасывать флаг `force_pairing = false` только после успешного `Zigbee.connected()`.
+  4. Добавить поддержку 4 профилей совместимости Zigbee в `zigbee_manager.*`, `web_server.*` и `webui_html.h`:
+     * Профиль 1 (Tuya / Яндекс RGB+CCT — По умолчанию): `Endpoint 1`, `app_device_id = 0x010D` (`Extended Color Light`), `Manufacturer = "_TZ3210_jd3z4yig"`, `Model = "TS0505B"`, возможности `HUE_SAT | X_Y | COLOR_TEMP (0x0019)`.
+     * Профиль 2 (Zigbee 3.0 Extended Color `0x010D`): `Endpoint 1`, `app_device_id = 0x010D`, `Manufacturer = "Yandex"`, `Model = "YNDX-00531"`, возможности `0x0019`.
+     * Профиль 3 (Чистый RGB `0x0102` без температуры): `Endpoint 1`, `app_device_id = 0x0102` (`Color Dimmable Light`), `Manufacturer = "SIGNIFY"`, `Model = "LCT015"`, возможности строго `HUE_SAT | X_Y (0x0009)`.
+     * Профиль 4 (Базовый Диммер `0x0101`): `Endpoint 1`, `app_device_id = 0x0101` (`Dimmable Light`), `Manufacturer = "IKEA of Sweden"`, `Model = "TRADFRI bulb E27 W opal 1000lm"`.
+  5. Записывать в бортовой журнал `last_zb_log` не только факт подключения к координатору, но и выбранный профиль, а также последние полученные от Алисы ZCL-команды (On/Off, яркость, RGB/HSV/Temp).
+- **Acceptance Criteria (Критерии для QA):**
+  1. `FIRMWARE_VERSION` равна `"0.9.7"`.
+  2. `ZIGBEE_LIGHT_ENDPOINT` равен `1`, вызывается `setPowerSource(ZB_POWER_SOURCE_MAINS)` и `esp_zb_nvram_erase_at_start(true)` при новом сопряжении.
+  3. Поддерживается выбор из 4 профилей Zigbee в WebUI (по умолчанию Профиль 1: `0x010D`, `_TZ3210_jd3z4yig` / `TS0505B`).
+  4. Сборка `pio run` завершается со статусом `SUCCESS`, размер `firmware.bin` строго меньше `1835008` байт.
+- **QA_Notes:** Проверено QA: замечаний нет. Сборка SUCCESS, размер firmware.bin 1754192 байт (< 1835008 байт), FIRMWARE_VERSION 0.9.7, Endpoint 1, MagicZigbeeLight 0x010D, Mains, NVRAM erase, 4 профиля в WebUI.

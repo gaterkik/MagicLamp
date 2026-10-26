@@ -163,6 +163,7 @@ void LampWebServer::registerRoutes() {
     m_server.on("/api/schedule", HTTP_POST, [this]() { handleSchedule(); });
     m_server.on("/api/schedule/sleep_now", HTTP_POST, [this]() { handleSleepNow(); });
     m_server.on("/api/radio/switch", HTTP_POST, [this]() { handleRadioSwitch(); });
+    m_server.on("/api/radio/profile", HTTP_POST, [this]() { handleRadioProfile(); });
     m_server.on("/api/ota/check", HTTP_POST, [this]() { handleOtaCheck(); });
     m_server.on("/api/wifi", HTTP_POST, [this]() { handleWifi(); });
 
@@ -307,6 +308,7 @@ void LampWebServer::handleStatus() {
     snprintf(duskBuf, sizeof(duskBuf), "%02d:%02d", sch.duskHour, sch.duskMinute);
 
     const char* radioMode = m_zigbee ? m_zigbee->getModeString() : "wifi";
+    uint8_t zbProfile = m_zigbee ? m_zigbee->getProfile() : 0;
     uint16_t cycleMask = m_effectMgr ? m_effectMgr->getCycleMask() : 0xFFFF;
     uint8_t activeParam1 = m_effectMgr ? m_effectMgr->getProfile(effect).param1 : 90;
     uint8_t nightlightTemp = m_effectMgr ? m_effectMgr->getProfile(0).param1 : 90;
@@ -320,6 +322,7 @@ void LampWebServer::handleStatus() {
                      ",\"param1\":" + String(activeParam1) +
                      ",\"colorTemp\":" + String(nightlightTemp) +
                      ",\"radio_mode\":\"" + String(radioMode) + "\"" +
+                     ",\"zb_profile\":" + String(zbProfile) +
                      ",\"cycle_mask\":" + String(cycleMask) +
                      ",\"time\":\"" + formattedTime + "\"" +
                      ",\"currentTime\":\"" + currentTime + "\"" +
@@ -717,6 +720,24 @@ void LampWebServer::handleRadioSwitch() {
         m_server.send(200, "application/json", res);
         delay(100);
         m_zigbee->switchToWifi("Запрос из WebUI", m_effectMgr);
+    }
+}
+
+void LampWebServer::handleRadioProfile() {
+    noteHttpActivity();
+    if (!m_zigbee) {
+        m_server.send(500, "application/json", "{\"status\":\"error\",\"message\":\"ZigbeeManager unavailable\"}");
+        return;
+    }
+
+    String body = m_server.hasArg("plain") ? m_server.arg("plain") : "";
+    int prof = 0;
+    if (getIntParam(m_server, body, "profile", prof)) {
+        if (prof < 0 || prof > 3) prof = 0;
+        m_zigbee->setProfile(static_cast<uint8_t>(prof));
+        m_server.send(200, "application/json", "{\"status\":\"ok\",\"profile\":" + String(prof) + "}");
+    } else {
+        m_server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing profile\"}");
     }
 }
 
