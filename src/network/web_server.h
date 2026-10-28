@@ -72,6 +72,8 @@ private:
     void handleRadioProfile();
     void handleOtaCheck();
     void handleWifi();
+    void handleLogDownload();
+    void handleLogClear();
     void handleNotFound();
 };
 

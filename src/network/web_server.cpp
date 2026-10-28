@@ -8,6 +8,7 @@
 #include "ota_github.h"
 #include "zigbee_manager.h"
 #include <Update.h>
+#include <LittleFS.h>
 
 LampWebServer::LampWebServer()
     : m_server(80),
@@ -133,6 +134,30 @@ static bool getStringParam(WebServer& server, const String& json, const char* na
     return false;
 }
 
+static String escapeJsonString(const String& in) {
+    String out;
+    out.reserve(in.length() + in.length() / 8 + 16);
+    for (size_t i = 0; i < in.length(); i++) {
+        char c = in[i];
+        if (c == '"') {
+            out += "\\\"";
+        } else if (c == '\\') {
+            out += "\\\\";
+        } else if (c == '\n') {
+            out += "\\n";
+        } else if (c == '\r') {
+            // skip CR
+        } else if (c == '\t') {
+            out += "\\t";
+        } else if ((uint8_t)c < 32) {
+            // skip control chars
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
 void LampWebServer::registerRoutes() {
     m_server.enableCORS(true);
 
@@ -166,6 +191,8 @@ void LampWebServer::registerRoutes() {
     m_server.on("/api/radio/profile", HTTP_POST, [this]() { handleRadioProfile(); });
     m_server.on("/api/ota/check", HTTP_POST, [this]() { handleOtaCheck(); });
     m_server.on("/api/wifi", HTTP_POST, [this]() { handleWifi(); });
+    m_server.on("/api/log/download", HTTP_GET, [this]() { handleLogDownload(); });
+    m_server.on("/api/log/clear", HTTP_POST, [this]() { handleLogClear(); });
 
     // Browser OTA Upload Handler via Update.h
     m_server.on("/api/ota/upload", HTTP_POST, [this]() {
@@ -353,7 +380,7 @@ void LampWebServer::handleStatus() {
                      ",\"latestVersion\":\"" + String(latestVer) + "\"" +
                      ",\"otaProgress\":" + String(otaProg) +
                      ",\"isUpdating\":" + String(isUpdating ? "true" : "false") +
-                     ",\"last_zb_log\":\"" + ZigbeeManager::getLog() + "\"" +
+                     ",\"last_zb_log\":\"" + escapeJsonString(ZigbeeManager::getLog()) + "\"" +
                      ",\"totalEffects\":" + String(totalEff) +
                      ",\"effects\":" + effectsArray + "}";
 
@@ -785,5 +812,27 @@ void LampWebServer::handleNotFound() {
     } else {
         m_server.send(404, "text/plain", "404 Not Found");
     }
+}
+
+void LampWebServer::handleLogDownload() {
+    noteHttpActivity();
+    if (LittleFS.exists("/zigbee.log")) {
+        File file = LittleFS.open("/zigbee.log", FILE_READ);
+        if (file) {
+            m_server.sendHeader("Content-Disposition", "attachment; filename=\"magiclamp_zigbee_log.txt\"");
+            m_server.streamFile(file, "text/plain");
+            file.close();
+            return;
+        }
+    }
+    String logData = ZigbeeManager::getLog();
+    m_server.sendHeader("Content-Disposition", "attachment; filename=\"magiclamp_zigbee_log.txt\"");
+    m_server.send(200, "text/plain; charset=utf-8", logData);
+}
+
+void LampWebServer::handleLogClear() {
+    noteHttpActivity();
+    ZigbeeManager::clearLog();
+    m_server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Log cleared\"}");
 }
 

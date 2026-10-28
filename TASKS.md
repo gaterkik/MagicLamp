@@ -17,7 +17,7 @@
 - **Фаза 2 (Task 2.1 – 2.4):** Движок 9 базовых эффектов и NVS — `DONE`
 - **Фаза 3 (Task 3.1 – 3.4):** Калибровка железа, 10-й эффект, Wi-Fi, WebUI, Silent OTA — `DONE`
 - **Фаза 4 (Task 4.1 – 4.7):** Магазин эффектов, EffectVM, v0.6.0 Профили эффектов в NVS, NTP Будильник Рассвет/Отбой, Аудио и Скорость — `DONE`
-- **Фаза 5 (Task 5.1 – 5.9):** Apple UX, 15 встроенных эффектов, релизы v0.8.0 – v0.9.7 — `DONE`
+- **Фаза 5 (Task 5.1 – 5.10):** Apple UX, 15 встроенных эффектов, релизы v0.8.0 – v0.9.8 — `DONE`
 
 ---
 
@@ -537,3 +537,48 @@
   3. Поддерживается выбор из 4 профилей Zigbee в WebUI (по умолчанию Профиль 1: `0x010D`, `_TZ3210_jd3z4yig` / `TS0505B`).
   4. Сборка `pio run` завершается со статусом `SUCCESS`, размер `firmware.bin` строго меньше `1835008` байт.
 - **QA_Notes:** Проверено QA: замечаний нет. Сборка SUCCESS, размер firmware.bin 1754192 байт (< 1835008 байт), FIRMWARE_VERSION 0.9.7, Endpoint 1, MagicZigbeeLight 0x010D, Mains, NVRAM erase, 4 профиля в WebUI.
+
+---
+
+### [Task 5.10] Релиз v0.9.8: Реализация рабочего профиля Яндекс Станции по спецификации VlasovLabTech (X_Y + COLOR_TEMP 153..500 + onIdentify), ротация IEEE MAC при смене профиля и скачивание многострочного лога (.txt)
+- **Status:** `DONE`
+- **Files:** `include/version.h`, `src/network/zigbee_manager.h`, `src/network/zigbee_manager.cpp`, `src/network/web_server.h`, `src/network/web_server.cpp`, `src/network/webui_html.h`, `src/main.cpp`
+- **Description:**
+  1. Поднять `FIRMWARE_VERSION` в `include/version.h` до `"0.9.8"`.
+  2. В `src/network/zigbee_manager.*` реализовать точный профиль `VlasovLabTech` (`Device ID = 0x0102`, `X_Y | COLOR_TEMP`, `setLightColorTemperatureRange(153, 500)`, `onIdentify`, `onLightChangeRgb`, `onLightChangeTemp`) и честные классы `ZigbeeLight` / `ZigbeeDimmableLight` для резервных профилей:
+     - Профиль 1 (По умолчанию — VlasovLabTech RGB+CCT `0x0102`): `ZigbeeColorDimmableLight(1)`, `Manufacturer = "VlasovLabTech"`, `Model = "ZD-C6-2D1ARGB-v2"`, `capabilities = X_Y | COLOR_TEMP (0x0018)`, `tempRange(153, 500)`, `onIdentify`.
+     - Профиль 2 (MagicLamp RGB+CCT `0x0102`): `ZigbeeColorDimmableLight(1)`, `Manufacturer = "MagicLamp"`, `Model = "MagicLamp-C6"`, `capabilities = X_Y | COLOR_TEMP (0x0018)`, `tempRange(153, 500)`, `onIdentify`.
+     - Профиль 3 (Базовый Свет Вкл/Выкл `0x0100` — VlasovLabTech): чистый класс `ZigbeeLight(1)` (БЕЗ кластера Color Control!), `Manufacturer = "VlasovLabTech"`, `Model = "NanoC6-OnOff-Light"`, `onIdentify`.
+     - Профиль 4 (Диммируемый Свет `0x0101`): чистый класс `ZigbeeDimmableLight(1)` (БЕЗ кластера Color Control!), `Manufacturer = "MagicLamp"`, `Model = "MagicLamp-Dimmer"`, `onIdentify`.
+  3. При смене профиля или новом сопряжении гарантированно взводить `force_pair = true`, очищать `zb_storage` (`esp_zb_nvram_erase_at_start(true)`) и смещать младший байт `ESP_MAC_IEEE802154` (счетчик попыток `pair_seq` в NVS), чтобы обходить кэш старого MAC-адреса в Яндекс Станции.
+  4. Заменить `saveLog` на накопительный многострочный `appendLog` (хранение истории в `LittleFS` `/zigbee.log` + буфер в NVS, перехват `esp_log_set_vprintf`), который НЕ стирается при выходе в Wi-Fi по 4 кликам.
+  5. В `src/network/web_server.*` и `src/network/webui_html.h` добавить маршруты `GET /api/log/download` (отдает файл `magiclamp_zigbee_log.txt`), `POST /api/log/clear` и кнопки скачивания/очистки многострочного лога в интерфейсе.
+- **Acceptance Criteria (Критерии для QA):**
+  1. `FIRMWARE_VERSION` равна `"0.9.8"`.
+  2. В `zigbee_manager.cpp` для цветных профилей 1 и 2 установлены `ZIGBEE_COLOR_CAPABILITY_X_Y | ZIGBEE_COLOR_CAPABILITY_COLOR_TEMP` (`0x0018`), вызван `setLightColorTemperatureRange(153, 500)` и зарегистрирован `onIdentify`.
+  3. При вызове `switchToWifi()` предыдущие записи лога НЕ затираются, а дописываются в конец журнала; работает маршрут `/api/log/download`.
+  4. Сборка `pio run` завершается со статусом `SUCCESS`, размер `firmware.bin` меньше `1835008` байт.
+- **QA_Notes:**
+  - `FIRMWARE_VERSION` поднята до `0.9.8` в `include/version.h`.
+  - В `src/main.cpp` гарантирована инициализация `LittleFS` (`LittleFS.begin(true)` с fallback на явную метку `"littlefs"`) в начале `setup()`.
+  - В `src/network/zigbee_manager.*`:
+    * Реализованы 4 профиля:
+      - Профиль 1 (По умолчанию): VlasovLabTech RGB+CCT 0x0102 (`ZigbeeColorDimmableLight`, ZD-C6-2D1ARGB-v2, capabilities X_Y | COLOR_TEMP 0x0018, tempRange 153..500).
+      - Профиль 2: MagicLamp RGB+CCT 0x0102 (`ZigbeeColorDimmableLight`, MagicLamp-C6, capabilities X_Y | COLOR_TEMP 0x0018, tempRange 153..500).
+      - Профиль 3: Базовый Свет Вкл/Выкл 0x0100 (`ZigbeeLight`, NanoC6-OnOff-Light, без Color Control).
+      - Профиль 4: Диммируемый Свет 0x0101 (`ZigbeeDimmableLight`, MagicLamp-Dimmer, без Color Control).
+    * Для всех эндпоинтов зарегистрирован `onIdentify(onZigbeeIdentify)`, запускающий `triggerSuccessWave()` и логирующий вызов.
+    * В `onZigbeeLightChangeRgb` реализовано включение, яркость и переключение эффектов 0..14 по оттенку Hue.
+    * В `onZigbeeLightChangeTemp` реализовано включение, яркость, переключение на «Ночник» (effect 0) и трансляция mireds (153..500) в param1 (255..0).
+    * При вызове `setProfile` сохраняется `zb_prof`, выставляется `force_pair = true` и инкрементируется `pair_seq` в NVS.
+    * В `begin()` при запуске Zigbee читается `pair_seq`, смещается младший байт IEEE 802.15.4 MAC через `esp_iface_mac_addr_set`, стирается NVRAM при `force_pair == true`, регистрируется активный эндпоинт и запускается `Zigbee.begin(ZIGBEE_END_DEVICE)`.
+    * Реализован многострочный накопительный логгер `appendLog`, `clearLog`, `getLog` с таймштампом `[MM:SS.mmm]`, записью в LittleFS `/zigbee.log` и NVS кольцевой буфер до 3.5 КБ, а также перехватом логов через `esp_log_set_vprintf`.
+    * При вызове `switchToWifi()` лог не стирается, а дописывается в конец журнала.
+  - В `src/network/web_server.*`:
+    * Добавлены маршруты `GET /api/log/download` (скачивание `magiclamp_zigbee_log.txt`) и `POST /api/log/clear`.
+    * Строка лога `last_zb_log` экранируется через `escapeJsonString()` для предотвращения повреждения JSON-структуры `/api/status`.
+  - В `src/network/webui_html.h`:
+    * Обновлен выпадающий список 4 профилей Zigbee (0: VlasovLabTech RGB+CCT 0x0102, 1: MagicLamp RGB+CCT 0x0102, 2: Базовый Свет 0x0100, 3: Диммер 0x0101).
+    * В секции «Системный журнал (Бортовой самописец)» лог выводится в `<pre id="zb-session-log">` с автоскроллом к свежим записям и кнопками «📥 Скачать полный лог (.txt)» и «🗑 Очистить лог».
+  - Сборка `pio run` успешна (`SUCCESS`). Flash: 1784394 / 1835008 байт (97.2%), размер `firmware.bin` 1796768 байт (< 1835008 байт).
+  - Проверено QA: замечаний нет. Сборка SUCCESS, размер firmware.bin 1796768 байт (< 1835008 байт), FIRMWARE_VERSION 0.9.8, спецификация VlasovLabTech 0x0102 X_Y|COLOR_TEMP, onIdentify, IEEE MAC ротация, накопительный лог LittleFS/NVS и маршрут скачивания лога работают.

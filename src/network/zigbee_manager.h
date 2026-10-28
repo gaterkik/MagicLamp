@@ -17,21 +17,8 @@ enum RadioMode : uint8_t {
 #define ZIGBEE_LIGHT_ENDPOINT 1
 
 /**
- * @class MagicZigbeeLight
- * @brief Custom Zigbee Color Dimmable Light with configurable device ID (0x010D/0x0102/0x0101)
- *        and Alice / Yandex Station Basic Cluster attributes and Mains power source.
- */
-class MagicZigbeeLight : public ZigbeeColorDimmableLight {
-public:
-    MagicZigbeeLight(uint8_t endpoint = ZIGBEE_LIGHT_ENDPOINT);
-    void setAppDeviceId(uint16_t deviceId);
-    void setupBasicClusterAttributes();
-};
-
-/**
  * @file zigbee_manager.h
- * @brief Real IEEE 802.15.4 Zigbee 3.0 hardware stack (MagicZigbeeLight)
- *        with clean Boot-Switch via NVS & ESP.restart().
+ * @brief Real IEEE 802.15.4 Zigbee 3.0 hardware stack with clean Boot-Switch via NVS & ESP.restart().
  */
 class ZigbeeManager {
 public:
@@ -69,7 +56,7 @@ public:
     void switchToZigbee(EffectManager* eff);
 
     /**
-     * @brief Clean switch to Wi-Fi mode: saves diagnostic log to NVS,
+     * @brief Clean switch to Wi-Fi mode: saves diagnostic log to NVS and LittleFS,
      * plays green beacon animation, saves mode=0, and executes ESP.restart().
      */
     void switchToWifi(const char* reason, EffectManager* eff = nullptr);
@@ -79,9 +66,11 @@ public:
      */
     uint8_t toggleMode(EffectManager* eff = nullptr);
 
-    // Diagnostic logs in NVS Preferences "sys_log"
-    static void saveLog(const char* logMsg);
+    // Multi-line cumulative flight recorder (LittleFS /zigbee.log + NVS ring buffer)
+    static void appendLog(const char* msg, bool printSerial = true);
+    static void clearLog();
     static String getLog();
+    static void saveLog(const char* logMsg) { appendLog(logMsg); }
 
     // Alice/Zigbee command handlers
     static void handleZigbeeOnOff(bool on, EffectManager& effectMgr);

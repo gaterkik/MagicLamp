@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <LittleFS.h>
 #include "config.h"
 #include "version.h"
 #include "hal/button.h"
@@ -43,6 +44,17 @@ void setup() {
                   PIN_BUTTON, BUTTON_ACTIVE_LEVEL == HIGH ? "HIGH" : "LOW");
     Serial.printf("Mic I2S Pins: SCK=%d, WS=%d, SD=%d\n",
                   PIN_MIC_SCK, PIN_MIC_WS, PIN_MIC_SD);
+
+    // 0. Initialize LittleFS filesystem
+    if (!LittleFS.begin(true)) {
+        if (!LittleFS.begin(true, "/littlefs", 10, "littlefs")) {
+            Serial.println(F("[LittleFS] ERROR: LittleFS mount failed!"));
+        } else {
+            Serial.println(F("[LittleFS] Mounted partition 'littlefs'."));
+        }
+    } else {
+        Serial.println(F("[LittleFS] Mounted successfully."));
+    }
 
     // 1. Initialize button driver
     button.begin();

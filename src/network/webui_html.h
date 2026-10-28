@@ -659,12 +659,12 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
 
       <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--card-border);">
-        <div style="font-weight:600; font-size:0.9rem; margin-bottom:6px;">Профиль совместимости Zigbee (Алиса):</div>
+        <div style="font-weight:600; font-size:0.9rem; margin-bottom:6px;">Профиль совместимости Zigbee (Алиса / Яндекс Станция):</div>
         <select id="sel-zb-profile" class="sched-select" onchange="onZbProfileChange(this.value)">
-          <option value="0">Профиль 1: Tuya / Яндекс RGB+CCT (0x010D, TS0505B) [По умолчанию]</option>
-          <option value="1">Профиль 2: Яндекс Станция Extended (0x010D, YNDX-00531)</option>
-          <option value="2">Профиль 3: Philips Hue RGB (0x0102, LCT015)</option>
-          <option value="3">Профиль 4: IKEA Диммер (0x0101, TRADFRI)</option>
+          <option value="0">Профиль 1: VlasovLabTech RGB+CCT (0x0102, ZD-C6-2D1ARGB-v2) [По умолчанию]</option>
+          <option value="1">Профиль 2: MagicLamp RGB+CCT (0x0102, MagicLamp-C6)</option>
+          <option value="2">Профиль 3: Базовый Свет Вкл/Выкл (0x0100, NanoC6-OnOff-Light)</option>
+          <option value="3">Профиль 4: Диммируемый Свет (0x0101, MagicLamp-Dimmer)</option>
         </select>
       </div>
     </section>
@@ -835,13 +835,17 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </summary>
         <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--card-border);">
           <div style="font-size:0.82rem; margin-bottom:8px;">
-            <span style="color:var(--text-muted);">Последний статус Zigbee-сессии:</span>
-            <div id="zb-session-log" style="font-family:monospace; font-size:0.8rem; background:rgba(0,0,0,0.35); padding:8px 10px; border-radius:6px; border:1px solid var(--card-border); margin-top:4px; color:var(--purple); word-break:break-word;">
-              Загрузка...
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
+              <span style="color:var(--text-muted);">Журнал событий сессий Zigbee:</span>
+              <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="downloadLog()">&#128229; Скачать полный лог (.txt)</button>
+                <button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="clearLog()">&#128465; Очистить лог</button>
+              </div>
             </div>
+            <pre id="zb-session-log" style="font-family:monospace; font-size:0.8rem; background:rgba(0,0,0,0.45); padding:10px 12px; border-radius:6px; border:1px solid var(--card-border); color:var(--purple); white-space:pre-wrap; word-break:break-all; max-height:220px; overflow-y:auto; margin:0;">Загрузка...</pre>
           </div>
           <div style="font-size:0.75rem; color:var(--text-muted);">
-            Данные фиксируются в энергонезависимой памяти NVS при переходах между радиостеками Wi-Fi и Zigbee 3.0 (IEEE 802.15.4).
+            Данные фиксируются накопительно в энергонезависимой памяти LittleFS (/zigbee.log) и NVS при переходах между радиостеками Wi-Fi и Zigbee 3.0 (IEEE 802.15.4).
           </div>
         </div>
       </details>
@@ -1158,6 +1162,21 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
+    function downloadLog() {
+      window.open('/api/log/download', '_blank');
+    }
+
+    async function clearLog() {
+      if (!confirm('Вы действительно хотите очистить системный журнал?')) return;
+      try {
+        await fetch('/api/log/clear', { method: 'POST' });
+        const zbLogEl = document.getElementById('zb-session-log');
+        if (zbLogEl) zbLogEl.textContent = 'Журнал очищен';
+      } catch (err) {
+        console.error('Clear log error:', err);
+      }
+    }
+
     function updateRadioModeUI(mode) {
       currentRadioMode = mode;
       const isZig = (mode === 'zigbee');
@@ -1362,17 +1381,23 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('telem-ip').innerText = data.ip || '--';
         document.getElementById('telem-uptime').innerText = formatUptime(data.uptime || 0);
         document.getElementById('telem-heap').innerText = data.freeHeap || '--';
-        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.9.7');
+        document.getElementById('telem-ver').innerText = 'v' + (data.version || '0.9.8');
 
         // OTA info
-        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.9.7');
+        document.getElementById('ota-cur-ver').innerText = 'v' + (data.version || '0.9.8');
         document.getElementById('ota-latest-ver').innerText = data.latestVersion ? ('v' + data.latestVersion) : 'не проверялась';
         document.getElementById('ota-status').innerText = data.otaStatus || 'Idle';
 
         // Flight recorder / Zigbee session log
         if (data.last_zb_log !== undefined) {
           const zbLogEl = document.getElementById('zb-session-log');
-          if (zbLogEl) zbLogEl.innerText = data.last_zb_log;
+          if (zbLogEl) {
+            const wasAtBottom = (zbLogEl.scrollHeight - zbLogEl.scrollTop <= zbLogEl.clientHeight + 40);
+            zbLogEl.textContent = data.last_zb_log;
+            if (wasAtBottom) {
+              zbLogEl.scrollTop = zbLogEl.scrollHeight;
+            }
+          }
         }
 
         // WiFi current SSID
