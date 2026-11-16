@@ -68,6 +68,8 @@ public:
 
     // Multi-line cumulative flight recorder (LittleFS /zigbee.log + NVS ring buffer)
     static void appendLog(const char* msg, bool printSerial = true);
+    static void appendLogLine(const char* msg, bool printSerial = true) { appendLog(msg, printSerial); }
+    static void flushLogToStorage();
     static void clearLog();
     static String getLog();
     static void saveLog(const char* logMsg) { appendLog(logMsg); }
@@ -94,6 +96,7 @@ private:
     bool m_pairingActive;
     uint32_t m_pairingStartMs;
     bool m_connectedSuccessDone;
+    uint32_t m_lastLogFlush;
 
     static constexpr uint32_t BOOT_WIFI_WINDOW_MS = 60000;
     static constexpr uint32_t HTTP_WIFI_EXTENSION_MS = 600000;

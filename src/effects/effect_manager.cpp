@@ -42,7 +42,9 @@ EffectManager::EffectManager()
       m_radioAnimStartMs(0),
       m_zigbeePairingMode(false),
       m_successWaveActive(false),
-      m_successWaveStartMs(0) {
+      m_successWaveStartMs(0),
+      m_zbNoWifiFeedbackActive(false),
+      m_zbNoWifiFeedbackStartMs(0) {
     // Initialize default profiles for all 15 built-in effects
     for (int i = 0; i < NUM_CORE_EFFECTS; i++) {
         m_profiles[i].brightness = 128;
@@ -277,6 +279,23 @@ void EffectManager::update(LedMatrix& matrix, const MicI2S& mic) {
 
     // 3. Render dimmer limit flashes if triggered
     renderLimitFlash(matrix);
+
+    // 3b. Render Zigbee No-WiFi Feedback (double violet-blue blink on top ring Y=15 for 900 ms)
+    if (m_zbNoWifiFeedbackActive && m_powerState) {
+        uint32_t elapsed = millis() - m_zbNoWifiFeedbackStartMs;
+        if (elapsed >= 900) {
+            m_zbNoWifiFeedbackActive = false;
+        } else {
+            float phase = static_cast<float>(elapsed % 450) / 450.0f;
+            float pulse = sinf(phase * 3.14159265f);
+            uint8_t scale = static_cast<uint8_t>(pulse * 255.0f);
+            CRGB violetBlue = CRGB(140, 20, 255);
+            violetBlue.nscale8_video(scale);
+            for (int x = 0; x < MATRIX_WIDTH; x++) {
+                matrix.setPixel(x, 15, violetBlue);
+            }
+        }
+    }
 
     // 4. Apply power curtain animation (rising on turn-on, falling on turn-off)
     applyCurtain(matrix);
@@ -1206,5 +1225,29 @@ void EffectManager::triggerSuccessWave() {
     m_successWaveActive = true;
     m_successWaveStartMs = millis();
     m_zigbeePairingMode = false;
+}
+
+void EffectManager::triggerZigbeeNoWifiFeedback() {
+    m_zbNoWifiFeedbackActive = true;
+    m_zbNoWifiFeedbackStartMs = millis();
+}
+
+void EffectManager::playFactoryResetAnimation(LedMatrix& matrix) {
+    for (int f = 0; f < 3; f++) {
+        matrix.fill(CRGB(255, 180, 30));
+        matrix.show();
+        delay(120);
+        matrix.fill(CRGB(255, 255, 255));
+        matrix.show();
+        delay(70);
+        matrix.clear(true);
+        delay(140);
+    }
+}
+
+void EffectManager::triggerFactoryResetWave(LedMatrix* matrix) {
+    if (matrix) {
+        playFactoryResetAnimation(*matrix);
+    }
 }
 

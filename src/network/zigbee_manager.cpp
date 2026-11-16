@@ -96,7 +96,17 @@ static MagicDimmableLight* s_zbDimmerLight = nullptr;
 static EffectManager* s_effMgr = nullptr;
 static LedMatrix* s_ledMatrix = nullptr;
 static ZigbeeManager* s_zbManager = nullptr;
-static String s_logBuffer = "";
+
+// Thread-safe lock-free RAM ring buffer for Zigbee flight recorder
+static constexpr size_t LOG_BUFFER_SIZE = 3584;     // Max RAM buffer for Preferences "zb_log" & WebUI
+static constexpr size_t FLUSH_BUFFER_SIZE = 2048;   // Buffer for pending writes to LittleFS /zigbee.log
+
+static char s_logBuffer[LOG_BUFFER_SIZE] = {0};
+static size_t s_logBufferLen = 0;
+static char s_pendingFlushBuffer[FLUSH_BUFFER_SIZE] = {0};
+static size_t s_pendingFlushLen = 0;
+static bool s_logDirty = false;
+static portMUX_TYPE s_logMux = portMUX_INITIALIZER_UNLOCKED;
 
 static vprintf_like_t s_origVprintf = nullptr;
 static bool s_inLogVprintf = false;
@@ -246,7 +256,8 @@ ZigbeeManager::ZigbeeManager()
       m_nightlyCheckDone(false),
       m_pairingActive(false),
       m_pairingStartMs(0),
-      m_connectedSuccessDone(false) {}
+      m_connectedSuccessDone(false),
+      m_lastLogFlush(0) {}
 
 void ZigbeeManager::setProfile(uint8_t prof) {
     if (prof > 3) prof = 0;
@@ -272,45 +283,135 @@ void ZigbeeManager::appendLog(const char* msg, bool printSerial) {
     uint32_t mmm = ms % 1000;
 
     char line[320];
-    snprintf(line, sizeof(line), "[%02u:%02u.%03u] %s\n", (unsigned int)mm, (unsigned int)ss, (unsigned int)mmm, msg);
+    int lineLen = snprintf(line, sizeof(line), "[%02u:%02u.%03u] %s\n",
+                           (unsigned int)mm, (unsigned int)ss, (unsigned int)mmm, msg);
+    if (lineLen <= 0) return;
+    if (lineLen >= static_cast<int>(sizeof(line))) {
+        lineLen = sizeof(line) - 1;
+        line[lineLen] = '\0';
+    }
 
     if (printSerial) {
         Serial.print(line);
     }
 
-    // 1. Append to LittleFS file /zigbee.log
-    File f = LittleFS.open("/zigbee.log", FILE_APPEND);
-    if (f) {
-        f.print(line);
-        f.close();
-    }
+    // Lock-free from heap/flash: write strictly to static RAM ring buffer under spinlock
+    portENTER_CRITICAL(&s_logMux);
 
-    // 2. Append to RAM buffer (up to 3.5 KB)
-    s_logBuffer += line;
-    if (s_logBuffer.length() > 3500) {
-        int cutIdx = s_logBuffer.length() - 3000;
-        int nextNl = s_logBuffer.indexOf('\n', cutIdx);
-        if (nextNl >= 0) {
-            s_logBuffer = s_logBuffer.substring(nextNl + 1);
+    // 1. Append to static ring buffer s_logBuffer (up to LOG_BUFFER_SIZE)
+    if (s_logBufferLen + lineLen >= LOG_BUFFER_SIZE) {
+        // Discard old lines from beginning to fit the new line
+        size_t needed = (s_logBufferLen + lineLen) - (LOG_BUFFER_SIZE - 1);
+        size_t cutPos = 0;
+        while (cutPos < s_logBufferLen && cutPos < needed) {
+            char* nl = strchr(s_logBuffer + cutPos, '\n');
+            if (nl) {
+                cutPos = (nl - s_logBuffer) + 1;
+            } else {
+                cutPos = needed;
+                break;
+            }
+        }
+        if (cutPos >= s_logBufferLen) {
+            s_logBufferLen = 0;
+            s_logBuffer[0] = '\0';
         } else {
-            s_logBuffer = s_logBuffer.substring(cutIdx);
+            size_t remain = s_logBufferLen - cutPos;
+            memmove(s_logBuffer, s_logBuffer + cutPos, remain);
+            s_logBufferLen = remain;
+            s_logBuffer[s_logBufferLen] = '\0';
+        }
+    }
+    size_t copyLen = lineLen;
+    if (s_logBufferLen + copyLen >= LOG_BUFFER_SIZE) {
+        copyLen = LOG_BUFFER_SIZE - 1 - s_logBufferLen;
+    }
+    memcpy(s_logBuffer + s_logBufferLen, line, copyLen);
+    s_logBufferLen += copyLen;
+    s_logBuffer[s_logBufferLen] = '\0';
+
+    // 2. Append to s_pendingFlushBuffer for LittleFS /zigbee.log
+    if (s_pendingFlushLen + lineLen < FLUSH_BUFFER_SIZE) {
+        memcpy(s_pendingFlushBuffer + s_pendingFlushLen, line, lineLen);
+        s_pendingFlushLen += lineLen;
+        s_pendingFlushBuffer[s_pendingFlushLen] = '\0';
+    } else {
+        size_t avail = (FLUSH_BUFFER_SIZE - 1) - s_pendingFlushLen;
+        if (avail > 0) {
+            memcpy(s_pendingFlushBuffer + s_pendingFlushLen, line, avail);
+            s_pendingFlushLen += avail;
+            s_pendingFlushBuffer[s_pendingFlushLen] = '\0';
         }
     }
 
-    // 3. Save to NVS
+    s_logDirty = true;
+    portEXIT_CRITICAL(&s_logMux);
+}
+
+void ZigbeeManager::flushLogToStorage() {
+    if (!s_logDirty) {
+        return;
+    }
+
+    static char s_flushCopy[FLUSH_BUFFER_SIZE];
+    static char s_nvsCopy[LOG_BUFFER_SIZE];
+    size_t flushLen = 0;
+
+    portENTER_CRITICAL(&s_logMux);
+    if (!s_logDirty) {
+        portEXIT_CRITICAL(&s_logMux);
+        return;
+    }
+
+    // Snapshot pending writes for LittleFS
+    flushLen = s_pendingFlushLen;
+    if (flushLen > 0) {
+        memcpy(s_flushCopy, s_pendingFlushBuffer, flushLen);
+        s_flushCopy[flushLen] = '\0';
+        s_pendingFlushLen = 0;
+        s_pendingFlushBuffer[0] = '\0';
+    }
+
+    // Snapshot current full RAM buffer for Preferences
+    memcpy(s_nvsCopy, s_logBuffer, s_logBufferLen + 1);
+
+    s_logDirty = false;
+    portEXIT_CRITICAL(&s_logMux);
+
+    // 1. Flush pending lines to LittleFS (/zigbee.log)
+    if (flushLen > 0) {
+        File f = LittleFS.open("/zigbee.log", FILE_APPEND);
+        if (f) {
+            f.write(reinterpret_cast<const uint8_t*>(s_flushCopy), flushLen);
+            f.close();
+        }
+    }
+
+    // 2. Save full RAM buffer snapshot to Preferences ("radio" -> "zb_log")
     Preferences prefs;
-    if (prefs.begin("sys_log", false)) {
-        prefs.putString("zb_log", s_logBuffer);
+    if (prefs.begin("radio", false)) {
+        prefs.putString("zb_log", s_nvsCopy);
         prefs.end();
     }
 }
 
 void ZigbeeManager::clearLog() {
-    s_logBuffer = "";
+    portENTER_CRITICAL(&s_logMux);
+    s_logBuffer[0] = '\0';
+    s_logBufferLen = 0;
+    s_pendingFlushBuffer[0] = '\0';
+    s_pendingFlushLen = 0;
+    s_logDirty = false;
+    portEXIT_CRITICAL(&s_logMux);
+
     if (LittleFS.exists("/zigbee.log")) {
         LittleFS.remove("/zigbee.log");
     }
     Preferences prefs;
+    if (prefs.begin("radio", false)) {
+        prefs.remove("zb_log");
+        prefs.end();
+    }
     if (prefs.begin("sys_log", false)) {
         prefs.remove("zb_log");
         prefs.remove("last_zb_log");
@@ -320,16 +421,44 @@ void ZigbeeManager::clearLog() {
 }
 
 String ZigbeeManager::getLog() {
-    if (s_logBuffer.isEmpty()) {
-        Preferences prefs;
-        if (prefs.begin("sys_log", true)) {
-            s_logBuffer = prefs.getString("zb_log", "");
-            prefs.end();
+    portENTER_CRITICAL(&s_logMux);
+    if (s_logBufferLen > 0) {
+        String logStr(s_logBuffer);
+        portEXIT_CRITICAL(&s_logMux);
+        return logStr;
+    }
+    portEXIT_CRITICAL(&s_logMux);
+
+    // 1. Try reading from Preferences ("radio" -> "zb_log")
+    Preferences prefs;
+    if (prefs.begin("radio", true)) {
+        String saved = prefs.getString("zb_log", "");
+        prefs.end();
+        if (!saved.isEmpty()) {
+            portENTER_CRITICAL(&s_logMux);
+            strncpy(s_logBuffer, saved.c_str(), sizeof(s_logBuffer) - 1);
+            s_logBuffer[sizeof(s_logBuffer) - 1] = '\0';
+            s_logBufferLen = strlen(s_logBuffer);
+            portEXIT_CRITICAL(&s_logMux);
+            return saved;
         }
     }
-    if (!s_logBuffer.isEmpty()) {
-        return s_logBuffer;
+
+    // 2. Fallback: check "sys_log" for backward compatibility
+    if (prefs.begin("sys_log", true)) {
+        String saved = prefs.getString("zb_log", "");
+        prefs.end();
+        if (!saved.isEmpty()) {
+            portENTER_CRITICAL(&s_logMux);
+            strncpy(s_logBuffer, saved.c_str(), sizeof(s_logBuffer) - 1);
+            s_logBuffer[sizeof(s_logBuffer) - 1] = '\0';
+            s_logBufferLen = strlen(s_logBuffer);
+            portEXIT_CRITICAL(&s_logMux);
+            return saved;
+        }
     }
+
+    // 3. Fallback: read from LittleFS (/zigbee.log)
     if (LittleFS.exists("/zigbee.log")) {
         File f = LittleFS.open("/zigbee.log", FILE_READ);
         if (f) {
@@ -337,9 +466,14 @@ String ZigbeeManager::getLog() {
             if (sz > 3500) {
                 f.seek(sz - 3500);
             }
-            s_logBuffer = f.readString();
+            String fsLog = f.readString();
             f.close();
-            return s_logBuffer;
+            portENTER_CRITICAL(&s_logMux);
+            strncpy(s_logBuffer, fsLog.c_str(), sizeof(s_logBuffer) - 1);
+            s_logBuffer[sizeof(s_logBuffer) - 1] = '\0';
+            s_logBufferLen = strlen(s_logBuffer);
+            portEXIT_CRITICAL(&s_logMux);
+            return fsLog;
         }
     }
     return "Нет записей о сессиях Zigbee";
@@ -489,6 +623,8 @@ void ZigbeeManager::switchToZigbee(EffectManager* eff) {
     prefs.putBool("force_pair", true);
     prefs.end();
 
+    flushLogToStorage();
+
     if (eff && m_matrix) {
         eff->triggerRadioModeAnimation(true); // Purple-gold rings converging to equator (2s)
         uint32_t t0 = millis();
@@ -514,6 +650,8 @@ void ZigbeeManager::switchToWifi(const char* reason, EffectManager* eff) {
     prefs.putUChar("mode", RADIO_MODE_WIFI);
     prefs.end();
 
+    flushLogToStorage();
+
     if (eff && m_matrix) {
         eff->triggerRadioModeAnimation(false); // Rotating green beacon on top rings (2s)
         uint32_t t0 = millis();
@@ -530,6 +668,7 @@ void ZigbeeManager::switchToWifi(const char* reason, EffectManager* eff) {
 }
 
 uint8_t ZigbeeManager::toggleMode(EffectManager* eff) {
+    flushLogToStorage();
     if (m_mode == RADIO_MODE_ZIGBEE) {
         switchToWifi("Ручное переключение по 4 кликам", eff);
         return RADIO_MODE_WIFI;
@@ -551,6 +690,12 @@ void ZigbeeManager::requestWifiSession(uint32_t durationMs, WiFiManager* wifi, E
 
 void ZigbeeManager::update(WiFiManager* wifi, EffectManager* eff, LedMatrix* matrix, OtaGithub* ota) {
     uint32_t now = millis();
+
+    // Periodic flush of RAM log buffer to storage (LittleFS & NVS) every 3000 ms
+    if (s_logDirty && (now - m_lastLogFlush >= 3000)) {
+        m_lastLogFlush = now;
+        flushLogToStorage();
+    }
 
     if (m_mode == RADIO_MODE_ZIGBEE) {
         // 1. Check Zigbee connection status

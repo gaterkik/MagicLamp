@@ -78,6 +78,24 @@ void setup() {
     // 5. Initialize Zigbee / Radio mode manager (reads mode from NVS)
     zigbeeManager.begin(&ledMatrix, &effectManager);
 
+    // Boot reason logging
+    esp_reset_reason_t rstReason = esp_reset_reason();
+    const char* rstStr = "UNKNOWN";
+    switch (rstReason) {
+        case ESP_RST_POWERON:   rstStr = "POWERON (Включение питания)"; break;
+        case ESP_RST_SW:        rstStr = "SW_RESET (Программный рестарт)"; break;
+        case ESP_RST_PANIC:     rstStr = "PANIC (Крах ядра / Исключение)"; break;
+        case ESP_RST_INT_WDT:   rstStr = "INT_WDT (Watchdog прерывания)"; break;
+        case ESP_RST_TASK_WDT:  rstStr = "TASK_WDT (Watchdog задачи FreeRTOS)"; break;
+        case ESP_RST_WDT:       rstStr = "WDT (Аппаратный Watchdog)"; break;
+        case ESP_RST_BROWNOUT:  rstStr = "BROWNOUT (Просадка питания 5V/3.3V)"; break;
+        default:                rstStr = "OTHER (Другая причина)"; break;
+    }
+    char rstBuf[128];
+    snprintf(rstBuf, sizeof(rstBuf), "Причина старта ESP32-C6: %s [код %d]", rstStr, (int)rstReason);
+    Serial.println(rstBuf);
+    zigbeeManager.appendLog(rstBuf);
+
     if (zigbeeManager.isZigbee()) {
         Serial.println(F("[Main] Clean Boot into ZIGBEE 3.0 Mode. Wi-Fi and WebServer disabled. 100% RAM & Radio dedicated to 802.15.4."));
     } else {
@@ -117,10 +135,13 @@ void loop() {
                 break;
 
             case BUTTON_EVENT_TRIPLE_CLICK:
-                // Triple click: Trigger GitHub Silent OTA release check (Wi-Fi only)
+                // Triple click: Trigger GitHub Silent OTA release check (Wi-Fi), or visual feedback (Zigbee)
                 if (zigbeeManager.isWifi()) {
                     Serial.println(F("[Control] Triple click: Checking for GitHub OTA updates..."));
                     otaGithub.triggerCheck();
+                } else {
+                    Serial.println(F("[Control] Triple click (Zigbee mode): No Wi-Fi available, giving visual feedback."));
+                    effectManager.triggerZigbeeNoWifiFeedback();
                 }
                 break;
 
@@ -131,11 +152,18 @@ void loop() {
                 break;
 
             case BUTTON_EVENT_SEVEN_CLICKS:
-                // 7 clicks: Wi-Fi reset & restore network defaults (Wi-Fi only)
-                if (zigbeeManager.isWifi()) {
-                    Serial.println(F("[Control] 7 clicks: Wi-Fi credentials reset requested."));
-                    wifiManager.resetSettings();
+                // 7 clicks: Global Factory Reset (works in both Wi-Fi and Zigbee)
+                Serial.println(F("[Control] 7 clicks: Global Factory Reset requested! Reverting to Wi-Fi SoftAP..."));
+                effectManager.playFactoryResetAnimation(ledMatrix);
+                {
+                    Preferences rPrefs;
+                    rPrefs.begin("radio", false);
+                    rPrefs.putUChar("mode", RADIO_MODE_WIFI);
+                    rPrefs.putBool("force_pair", false);
+                    rPrefs.end();
                 }
+                wifiManager.resetSettings();
+                ESP.restart();
                 break;
 
             case BUTTON_EVENT_LONG_PRESS_HOLD:

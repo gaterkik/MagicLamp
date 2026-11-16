@@ -17,7 +17,7 @@
 - **Фаза 2 (Task 2.1 – 2.4):** Движок 9 базовых эффектов и NVS — `DONE`
 - **Фаза 3 (Task 3.1 – 3.4):** Калибровка железа, 10-й эффект, Wi-Fi, WebUI, Silent OTA — `DONE`
 - **Фаза 4 (Task 4.1 – 4.7):** Магазин эффектов, EffectVM, v0.6.0 Профили эффектов в NVS, NTP Будильник Рассвет/Отбой, Аудио и Скорость — `DONE`
-- **Фаза 5 (Task 5.1 – 5.10):** Apple UX, 15 встроенных эффектов, релизы v0.8.0 – v0.9.8 — `DONE`
+- **Фаза 5 (Task 5.1 – 5.11):** Apple UX, 15 встроенных эффектов, релизы v0.8.0 – v0.9.9 — `DONE`
 
 ---
 
@@ -582,3 +582,28 @@
     * В секции «Системный журнал (Бортовой самописец)» лог выводится в `<pre id="zb-session-log">` с автоскроллом к свежим записям и кнопками «📥 Скачать полный лог (.txt)» и «🗑 Очистить лог».
   - Сборка `pio run` успешна (`SUCCESS`). Flash: 1784394 / 1835008 байт (97.2%), размер `firmware.bin` 1796768 байт (< 1835008 байт).
   - Проверено QA: замечаний нет. Сборка SUCCESS, размер firmware.bin 1796768 байт (< 1835008 байт), FIRMWARE_VERSION 0.9.8, спецификация VlasovLabTech 0x0102 X_Y|COLOR_TEMP, onIdentify, IEEE MAC ротация, накопительный лог LittleFS/NVS и маршрут скачивания лога работают.
+
+---
+
+### [Task 5.11] Релиз v0.9.9: Устранение краша SPI Flash Cache в Zigbee-логгере (lock-free RAM буфер + отложенный flush в loop), логирование esp_reset_reason() и глобальный сброс по 7 кликам с индикацией
+- **Status:** `DONE`
+- **Files:** `include/version.h`, `src/network/zigbee_manager.h`, `src/network/zigbee_manager.cpp`, `src/main.cpp`, `src/effects/effect_manager.h`, `src/effects/effect_manager.cpp`
+- **Description:**
+  1. Поднять `FIRMWARE_VERSION` в `include/version.h` до `"0.9.9"`.
+  2. Переписать систему логирования в `src/network/zigbee_manager.*`:
+     - Полностью удалить вызовы `writeLogToLittleFS()` и `Preferences` (`prefs.begin` / `putString`) из функций `appendLogLine()` и `zigbeeLogVprintf()`.
+     - Использовать `portMUX_TYPE s_logMux` для безопасного добавления строк в кольцевой RAM-буфер `s_logBuffer` и выставлять флаг `s_logDirty = true` (без обращений к SPI Flash).
+     - Реализовать метод `flushLogToStorage()`, выполняющий сброс `s_logBuffer` в `LittleFS` (`/zigbee.log`) и `Preferences` (`"radio" -> "zb_log"`).
+     - Вызывать `flushLogToStorage()` из основного потока в `ZigbeeManager::update()` не чаще одного раза в 3 секунды (при `s_logDirty == true`), а также синхронно перед `ESP.restart()` в `switchToWifi()` и `toggleMode()`.
+     - В `toggleMode()` использовать контрастные цвета анимации: зеленый (`CRGB(0, 255, 80)`) для перехода в Wi-Fi и пурпурно-золотой (`CRGB(220, 40, 255)`) для перехода в Zigbee.
+  3. В `src/main.cpp`:
+     - В начале `setup()` логировать результат `esp_reset_reason()` в человекочитаемом виде (`POWERON`, `SW_RESET`, `PANIC`, `INT_WDT`, `TASK_WDT`, `BROWNOUT`).
+     - Сделать `BUTTON_EVENT_SEVEN_CLICKS` глобальным (без проверки `isWifi()`): проигрывать 1-секундную тройную янтарно-белую вспышку подтверждения на всей матрице, сбрасывать флаг `is_zigbee = false` в NVS, вызывать `wifiManager.resetSettings()` и перезагружать ESP32 в точку доступа `MagicLamp-Setup`.
+     - Для `BUTTON_EVENT_TRIPLE_CLICKS` в режиме Zigbee проигрывать визуальную обратную связь (двойное фиолетово-синее мигание верхнего кольца `Y=15`).
+- **Acceptance Criteria (Критерии для QA):**
+  1. `FIRMWARE_VERSION` равна `"0.9.9"`.
+  2. В функции `zigbeeLogVprintf()` и ZCL-коллбэках полностью отсутствуют вызовы `LittleFS` и `Preferences` (запись на Flash происходит только в `flushLogToStorage()` из главного потока).
+  3. При старте логируется результат `esp_reset_reason()`.
+  4. `BUTTON_EVENT_SEVEN_CLICKS` работает как в Wi-Fi, так и в Zigbee режиме и сопровождается визуальной индикацией.
+  5. Сборка `pio run` завершается со статусом `SUCCESS`, размер `firmware.bin` меньше `1835008` байт.
+- **QA_Notes:** Проверено QA: замечаний нет. Сборка SUCCESS, размер firmware.bin 1798848 байт (< 1835008 байт). FIRMWARE_VERSION 0.9.9. В zigbeeLogVprintf() и ZCL-коллбэках полностью отсутствуют обращения к LittleFS/Preferences (запись в RAM через s_logMux spinlock, flushLogToStorage() вызывается из loop() раз в 3000 мс и перед restart). Логирование esp_reset_reason() добавлено в setup(). 7 кликов сброса работают глобально с тройной янтарно-белой анимацией, 3 клика в Zigbee дают двойное фиолетово-синее мигание Y=15. Все критерии приемки выполнены.

@@ -409,6 +409,26 @@ public:
     bool isSuccessWaveActive() const { return m_successWaveActive; }
 
     /**
+     * @brief Trigger visual feedback for 3 clicks in Zigbee mode (no Wi-Fi OTA):
+     * double violet-blue flash on top ring Y=15 for ~800-1000 ms non-blocking.
+     */
+    void triggerZigbeeNoWifiFeedback();
+
+    bool isZigbeeNoWifiFeedbackActive() const { return m_zbNoWifiFeedbackActive; }
+
+    /**
+     * @brief Helper methods to trigger OTA states.
+     */
+    void triggerOtaChecking() { setOtaState(OTA_STATE_CHECKING); }
+    void triggerOtaError() { setOtaState(OTA_STATE_ERROR); }
+
+    /**
+     * @brief Play 1-second triple amber-white flash on entire matrix for factory reset confirmation.
+     */
+    void playFactoryResetAnimation(LedMatrix& matrix);
+    void triggerFactoryResetWave(LedMatrix* matrix = nullptr);
+
+    /**
      * @brief Render radio mode animation frame for given elapsed time.
      */
     void renderRadioModeAnimation(LedMatrix& matrix, uint32_t elapsed);
@@ -423,6 +443,7 @@ private:
     void renderLimitFlash(LedMatrix& matrix);
     void renderOta(LedMatrix& matrix);
     void renderZigbeePairing(LedMatrix& matrix);
+    void renderZigbeeNoWifiFeedback(LedMatrix& matrix);
 
     volatile OtaState m_otaState;
     volatile uint8_t m_otaProgress;
@@ -460,6 +481,8 @@ private:
     bool m_zigbeePairingMode;
     bool m_successWaveActive;
     uint32_t m_successWaveStartMs;
+    bool m_zbNoWifiFeedbackActive;
+    uint32_t m_zbNoWifiFeedbackStartMs;
 
     bool m_nvsDirty;
     uint32_t m_nvsDirtyTime;
